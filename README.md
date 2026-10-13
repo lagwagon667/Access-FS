@@ -1,0 +1,28 @@
+# Access FileSystem Provider
+
+This is a proof-of-concept for a VS Code Extension that provides a file system backed by an Access Database.
+
+## How to use
+
+Prerequisites: To build this extension you need to have VC++ libraries and Python3 installed. You also need a recent VS Code installation and Microsoft Access running on the same machine. Moreover `Powershell5` is required (should be available on any windows, `Powershell Core / 7` is not sufficient).
+
+Clone this git repo.. Make sure you have only one Access instance running with an `.accdb` opened. Open the git repo in VS code and hit `F5` to start debugging.
+
+Press `F1` and execute command `AccessFS: Add access objects to workspace`. You should now be able to browse your `.accdb` in the VS Code browser.
+
+### Troubleshooting
+
+#### I do not get any access objects shown in my browser
+
+Check the task manager, if there is still a zombie-access process around. Chances are the extension connects to this access instance instead of your designated access window.
+
+## Current State
+
+This extension currently is in a very early stage and only has a limited feature set.
+
+- Browse all objects available in the current `.accdb`
+- Show content of of code modules living in the current `.accdb` (readonly)
+
+## Architecture
+
+This extension implements a `vscode.FileSystemProvider`. It currently implements a powershell bridge to retrieve access objects.
