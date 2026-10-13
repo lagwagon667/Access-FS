@@ -137,8 +137,23 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
         throw vscode.FileSystemError.NoPermissions(uri);
     }
 
-    rename(oldUri: vscode.Uri): void {
-        throw vscode.FileSystemError.NoPermissions(oldUri);
+    rename(oldUri: vscode.Uri, newUri: vscode.Uri): void {
+        const { category: oldCategory, name: oldName } = this.getCategoryAndName(oldUri);
+        const { category: newCategory, name: newName } = this.getCategoryAndName(newUri);
+
+        if (oldCategory !== newCategory) {
+            throw vscode.FileSystemError.Unavailable(`Cannot rename between different categories ${oldCategory} and ${newCategory}`);
+        }
+
+        const extension = `.${this.getExtension(newCategory)}`;
+        if (!oldName.endsWith(extension)) {
+            throw vscode.FileSystemError.FileNotFound(oldName);
+        }
+
+        const oldAccessObjectName = oldName.slice(0, -extension.length);
+        const newAccessObjectName = newName.slice(0, -extension.length);
+
+        this.bridge.rename(newCategory, oldAccessObjectName, newAccessObjectName);
     }
 
     private pathParts(uri: vscode.Uri): string[] {
