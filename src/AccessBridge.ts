@@ -6,13 +6,36 @@ export class AccessBridge {
     private readonly access: WinaxObject = new WinaxObject('Access.Application', { activate: true });
 
     private readonly categories = {
-        tables: this.access.CurrentData.AllTables,
-        queries: this.access.CurrentData.AllQueries,
-        forms: this.access.CurrentProject.AllForms,
-        reports: this.access.CurrentProject.AllReports,
-        modules: this.access.CurrentProject.AllModules,
-        macros: this.access.CurrentProject.AllMacros,
+        tables: () => this.access.CurrentData.AllTables,
+        queries: () => this.access.CurrentData.AllQueries,
+        forms: () => this.access.CurrentProject.AllForms,
+        reports: () => this.access.CurrentProject.AllReports,
+        modules: () => this.access.CurrentProject.AllModules,
+        macros: () => this.access.CurrentProject.AllMacros,
     } as const;
+
+    private readonly codeTypes = {
+        vbext_ct_StdModule: 1,
+        vbext_ct_ClassModule: 2,
+        vbext_ct_MSForm: 3,
+        vbext_ct_Document: 100,
+    };
+
+    private readonly acObjectType = {
+        acDatabaseProperties: 11,
+        acDefault: -1,
+        acDiagram: 8,
+        acForm: 2,
+        acFunction: 10,
+        acMacro: 4,
+        acModule: 5,
+        acQuery: 1,
+        acReport: 3,
+        acServerView: 7,
+        acStoredProcedure: 9,
+        acTable: 0,
+        acTableDataMacro: 12,
+    }
 
     constructor() {
         if (process.platform !== 'win32') {
@@ -41,7 +64,7 @@ export class AccessBridge {
     }
 
     public getNames(category: Category): string[] {
-        const collection = this.categories[category];
+        const collection = this.categories[category]();
         const names: string[] = [];
         for (let i = 0; i < collection.Count; i++) {
             names.push(collection.Item(i).Name);
@@ -75,9 +98,16 @@ export class AccessBridge {
     }
 
     private writeCodeModule(name: string, content: string) {
-        const { lineCount, codeModule } = this.getCodeModule(name);
-        codeModule.DeleteLines(1, lineCount);
-        codeModule.AddFromString(content);
+        try {
+            const { lineCount, codeModule } = this.getCodeModule(name);
+            codeModule.DeleteLines(1, lineCount);
+            codeModule.AddFromString(content);
+        } catch (error) {
+            // new code module
+            const newModule = this.access.VBE.ActiveVBProject.VBComponents.Add(this.codeTypes.vbext_ct_StdModule);
+            newModule.Name = name;
+            this.access.DoCmd.Save(this.acObjectType.acModule, name);
+        }
     }
 
     private renameCodeModule(oldName: string, newName: string) {
