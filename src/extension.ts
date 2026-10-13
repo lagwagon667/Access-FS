@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const fsProvider = vscode.workspace.registerFileSystemProvider(
 		'accessfs',
 		provider,
-		{ isCaseSensitive: false, isReadonly: true },
+		{ isCaseSensitive: false, isReadonly: false },
 	);
 	const command = vscode.commands.registerCommand('accessfs.addToWorkspace', () => {
 		const root = vscode.Uri.parse('accessfs:/');

@@ -47,7 +47,6 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             ctime: this.timestamp,
             mtime: this.timestamp,
             size: content.byteLength,
-            permissions: vscode.FilePermission.Readonly,
         };
     }
 
@@ -72,25 +71,23 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
     }
 
     readFile(uri: vscode.Uri): Uint8Array {
-        const parts = this.pathParts(uri);
-        if (parts.length === 0) {
-            throw vscode.FileSystemError.FileIsADirectory(uri);
-        }
-        const category = this.getCategory(parts[0]);
-        if (parts.length === 1 && category) {
-            throw vscode.FileSystemError.FileIsADirectory(uri);
-        }
-        if (parts.length !== 2 || !category) {
-            throw vscode.FileSystemError.FileNotFound(uri);
-        }
-        return this.getObjectContent(category, parts[1]);
+        const { category, name } = this.getCategoryAndName(uri);
+        return this.getObjectContent(category, name);
     }
 
     createDirectory(uri: vscode.Uri): void {
         throw vscode.FileSystemError.NoPermissions(uri);
     }
 
-    writeFile(uri: vscode.Uri): void {
+    writeFile(uri: vscode.Uri, content: Uint8Array): void {
+        const { category, name } = this.getCategoryAndName(uri);
+
+
+        switch (category) {
+            case 'modules':
+                this.setCodeModuleContent(category, name, content.toString());
+                return;
+        }
         throw vscode.FileSystemError.NoPermissions(uri);
     }
 
@@ -130,16 +127,31 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             case 'queries':
                 return 'sql';
             case 'forms':
-                return 'frm';
+                return 'form';
             case 'reports':
                 return 'rpt';
             case 'modules':
                 return 'vb';
             case 'macros':
-                return 'mac';
+                return 'macro';
             default:
                 throw new Error(`Unhandled category: ${category}`);
         }
+    }
+
+    private getCategoryAndName(uri: vscode.Uri): { category: Category; name: string } {
+        const parts = this.pathParts(uri);
+        if (parts.length === 0) {
+            throw vscode.FileSystemError.FileIsADirectory(uri);
+        }
+        const category = this.getCategory(parts[0]);
+        if (parts.length === 1 && category) {
+            throw vscode.FileSystemError.FileIsADirectory(uri);
+        }
+        if (parts.length !== 2 || !category) {
+            throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        return { category, name: parts[1] };
     }
 
     private getNames(category: Category): string[] {
@@ -248,6 +260,47 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             throw vscode.FileSystemError.Unavailable(`Could not parse Access object names: ${details}`);
         }
         throw vscode.FileSystemError.Unavailable(`PowerShell returned no content for code module ${name}.`);
+    }
+
+    private setCodeModuleContent(category: Category, name: string, content: string): void {
+        if (process.platform !== 'win32') {
+            throw vscode.FileSystemError.Unavailable('Reading Access objects requires Windows.');
+        }
+
+        const extension = `.${this.getExtension(category)}`;
+        if (!name.endsWith(extension)) {
+            throw vscode.FileSystemError.FileNotFound(name);
+        }
+        const accessObjectName = name.slice(0, -extension.length);
+
+        const script = [
+            '$ErrorActionPreference = "Stop"',
+            'try {',
+            '  $access = [System.Runtime.InteropServices.Marshal]::GetActiveObject("Access.Application")',
+            '  $vbProject = $access.VBE.ActiveVBProject',
+            `  $vbComponent = $vbProject.VBComponents.Item("${accessObjectName}")`,
+            '  $codeModule = $vbComponent.CodeModule',
+            '  $lineCount = $codeModule.CountOfLines',
+            '  $codeModule.DeleteLines(1, $lineCount)',
+            `  $codeModule.AddFromString(@'
+${content}
+'@)`,
+            '} catch {',
+            '  [Console]::Error.WriteLine($_.Exception.Message)',
+            '  exit 1',
+            '}',
+        ].join('\r\n');
+        const result = spawnSync(
+            'powershell.exe',
+            ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+            { encoding: 'utf8', windowsHide: true, timeout: 15000 },
+        );
+        if (result.error || result.status !== 0) {
+            const details = result.error?.message || result.stderr.trim() || 'PowerShell failed to query Access.';
+            throw vscode.FileSystemError.Unavailable(
+                `Could not write code module ${name} from the running Microsoft Access instance: ${details}`,
+            );
+        }
     }
 
 }
