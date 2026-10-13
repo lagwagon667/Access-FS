@@ -31,6 +31,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
     "@types/vscode": "^1.140.0",
@@ -43,5 +44,8 @@
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"
+  },
+  "dependencies": {
+    "winax": "^3.6.9"
   }
 }
