@@ -10,7 +10,6 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:accessfs.addToWorkspace",
     "onFileSystem:accessfs"
   ],
   "main": "./out/extension.js",
