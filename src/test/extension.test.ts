@@ -20,6 +20,11 @@ suite('Extension Test Suite', () => {
 			(await vscode.commands.getCommands(true)).includes('accessfs.addToWorkspace'),
 			'accessfs.addToWorkspace should be registered after activation',
 		);
+		assert.strictEqual(
+			require.cache[require.resolve('winax')],
+			undefined,
+			'winax should not load until an Access object is requested',
+		);
 	});
 
 	test('lists the Access object categories at the filesystem root', () => {

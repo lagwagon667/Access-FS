@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { Category } from './AccessFileSystemProvider';
-import { Object as WinaxObject } from 'winax';
+import type { Category } from './AccessFileSystemProvider';
+import type { Object as WinaxObject } from 'winax';
 
 export class AccessBridge {
-    private readonly access: WinaxObject = new WinaxObject('Access.Application', { activate: true });
+    private accessInstance: WinaxObject | undefined;
 
     private readonly categories = {
         tables: () => this.access.CurrentData.AllTables,
@@ -35,12 +35,20 @@ export class AccessBridge {
         acStoredProcedure: 9,
         acTable: 0,
         acTableDataMacro: 12,
-    }
+    };
 
     constructor() {
         if (process.platform !== 'win32') {
             throw vscode.FileSystemError.Unavailable('Reading Access objects requires Windows.');
         }
+    }
+
+    private get access(): WinaxObject {
+        if (!this.accessInstance) {
+            const WinaxObject = (require('winax') as typeof import('winax')).Object;
+            this.accessInstance = new WinaxObject('Access.Application', { activate: true });
+        }
+        return this.accessInstance;
     }
 
     public read(category: Category, name: string): string | undefined {

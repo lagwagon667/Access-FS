@@ -16,6 +16,10 @@ export function activate(context: vscode.ExtensionContext) {
 		provider,
 		{ isCaseSensitive: false, isReadonly: false },
 	);
+	context.subscriptions.push(new vscode.Disposable(() => {
+		fsProvider.dispose();
+		provider.dispose();
+	}));
 	const command = vscode.commands.registerCommand('accessfs.addToWorkspace', () => {
 		const root = vscode.Uri.parse('accessfs:/');
 		const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
@@ -30,8 +34,6 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	context.subscriptions.push(fsProvider);
-	context.subscriptions.push(provider);
 	context.subscriptions.push(command);
 }
 

@@ -31,7 +31,7 @@ npx electron-rebuild -f -w winax -v <electron_version>
 This extension currently is in a very early stage and only has a limited feature set.
 
 - Browse all objects available in the current `.accdb`
-- Read and updae content of of code modules living in the current `.accdb`
+- Almost complete support for code modules in `.accdb` (copy is still broken)
 
 ## Architecture
 
