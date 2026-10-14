@@ -134,7 +134,13 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
     }
 
     delete(uri: vscode.Uri): void {
-        throw vscode.FileSystemError.NoPermissions(uri);
+        const { category, name } = this.getCategoryAndName(uri);
+        const extension = `.${this.getExtension(category)}`;
+        if (!name.endsWith(extension)) {
+            throw vscode.FileSystemError.FileNotFound(name);
+        }
+        const accessObjectName = name.slice(0, -extension.length);
+        this.bridge.delete(category, accessObjectName);
     }
 
     rename(oldUri: vscode.Uri, newUri: vscode.Uri): void {

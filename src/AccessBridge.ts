@@ -82,6 +82,16 @@ export class AccessBridge {
         );
     }
 
+    public delete(category: Category, name: string) {
+        switch (category) {
+            case 'modules':
+                return this.deleteCodeModule(name);
+        }
+        throw vscode.FileSystemError.Unavailable(
+            `Access Object category ${category} not supported yet`,
+        );
+    }
+
     private getCodeModule(name: string) {
         const vbProject = this.access.VBE.ActiveVBProject;
         const vbComponent = vbProject.VBComponents.Item(name);
@@ -113,5 +123,11 @@ export class AccessBridge {
     private renameCodeModule(oldName: string, newName: string) {
         const { codeModule } = this.getCodeModule(oldName);
         codeModule.Parent.Name = newName;
+    }
+
+    private deleteCodeModule(name: string) {
+        const { codeModule } = this.getCodeModule(name);
+        const vbComponent = codeModule.Parent;
+        this.access.VBE.ActiveVBProject.VBComponents.Remove(vbComponent);
     }
 }
