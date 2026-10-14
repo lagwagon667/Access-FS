@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import { spawnSync } from 'child_process';
-import { AccessBridge } from './AccessBridge';
+import { AccessBridge, type AccessInstance } from './AccessBridge';
 
 const categories = {
     tables: '$access.CurrentData.AllTables',
@@ -26,6 +25,10 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
     dispose(): void {
         this.changedEmitter.dispose();
+    }
+
+    connectTo(instance: AccessInstance): void {
+        this.bridge.connectTo(instance);
     }
 
     stat(uri: vscode.Uri): vscode.FileStat {

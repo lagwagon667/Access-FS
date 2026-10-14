@@ -4,11 +4,11 @@ This is a proof-of-concept for a VS Code Extension that provides a file system b
 
 ## How to use
 
-Prerequisites: To build this extension you need to have VC++ libraries and Python3 installed. You also need a recent VS Code installation and Microsoft Access running on the same machine.
+Prerequisites: To build this extension you need to have VC++ libraries and Python3 installed. You also need a recent VS Code installation and at least one open Microsoft Access database on the same machine.
 
-Clone this git repo. Make sure you have only one Access instance running with an `.accdb` opened. Open the git repo in VS code and press `F5` to start debugging.
+Clone this git repo. Open the git repo in VS Code and press `F5` to start debugging.
 
-Press `F1` and execute command `AccessFS: Add access objects to workspace`. You should now be able to browse your `.accdb` in the VS Code browser.
+Press `F1` and execute command `AccessFS: Add access objects to workspace`. Select the open database by filename from the list. Access windows without an open database are omitted. You should now be able to browse the selected `.accdb` in the VS Code browser.
 
 > Currently, only code modules can be read and written with this extension.
 
@@ -16,7 +16,7 @@ Press `F1` and execute command `AccessFS: Add access objects to workspace`. You 
 
 #### I do not get any access objects shown in my browser
 
-Check the task manager, if there is still a zombie-access process around. Chances are the extension connects to this access instance instead of your designated access window.
+Check the task manager for a zombie Access process with an open database. Close it and run the command again to select your designated database.
 
 #### I get an error stating that winax was built against a different node version
 
