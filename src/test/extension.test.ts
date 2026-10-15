@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { AccessFileSystemProvider } from '../AccessFileSystemProvider';
 import { parseTableData } from '../tableData';
 import { getComCollectionCount } from '../comCollection';
+import { isDaoHiddenOrSystem, isMsysHiddenOrSystem } from '../accessObjectFlags';
 // import * as myExtension from '../../extension';
 
 suite('Extension Test Suite', () => {
@@ -93,6 +94,15 @@ suite('Extension Test Suite', () => {
 			() => getComCollectionCount({}, 'table fields'),
 			/Could not read the item count from the Access table fields collection/,
 		);
+	});
+
+	test('recognizes DAO and MSys hidden/system flags', () => {
+		assert.strictEqual(isDaoHiddenOrSystem(0), false);
+		assert.strictEqual(isDaoHiddenOrSystem(1), true);
+		assert.strictEqual(isDaoHiddenOrSystem(-2147483648), true);
+		assert.strictEqual(isMsysHiddenOrSystem(0), false);
+		assert.strictEqual(isMsysHiddenOrSystem(1), true);
+		assert.strictEqual(isMsysHiddenOrSystem(2), true);
 	});
 
 	test('Sample test', () => {

@@ -16,6 +16,8 @@ Table files use `.json` snapshots containing the table columns and rows. Edit an
 
 Code modules can also be read and written with this extension.
 
+Hidden and system Access objects are shown with a dimmed name in the VS Code Explorer.
+
 ### Troubleshooting
 
 #### I do not get any access objects shown in my browser

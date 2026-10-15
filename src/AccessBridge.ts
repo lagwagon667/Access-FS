@@ -5,6 +5,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { parseTableData, type AccessTableColumn } from './tableData';
 import { getComCollectionCount } from './comCollection';
+import { isDaoHiddenOrSystem, isMsysHiddenOrSystem } from './accessObjectFlags';
 
 declare global {
     interface ActiveXObjectOptions {
@@ -252,6 +253,36 @@ export class AccessBridge {
             }
         }
         return names;
+    }
+
+    public isHiddenOrSystem(category: Category, name: string): boolean {
+        if (category === 'tables' || category === 'queries') {
+            const database = this.access.CurrentDb();
+            const collection = category === 'tables' ? database.TableDefs : database.QueryDefs;
+            const attributes = collection.Item(name).Attributes;
+            if (typeof attributes !== 'number') {
+                throw new Error(`Access returned invalid attributes for ${category.slice(0, -1)} "${name}".`);
+            }
+            return isDaoHiddenOrSystem(attributes);
+        }
+
+        const escapedName = name.replace(/'/g, "''");
+        const recordset = this.access.CurrentDb().OpenRecordset(
+            `SELECT Flags FROM MSysObjects WHERE Name = '${escapedName}'`,
+            4,
+        );
+        try {
+            if (recordset.EOF) {
+                return false;
+            }
+            const flags = recordset.Fields.Item(0).Value;
+            if (typeof flags !== 'number') {
+                throw new Error(`Access returned invalid object flags for ${category.slice(0, -1)} "${name}".`);
+            }
+            return isMsysHiddenOrSystem(flags);
+        } finally {
+            recordset.Close();
+        }
     }
 
     public rename(category: Category, oldName: string, newName: string) {

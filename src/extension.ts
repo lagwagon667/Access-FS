@@ -17,7 +17,8 @@ export function activate(context: vscode.ExtensionContext) {
 		provider,
 		{ isCaseSensitive: false, isReadonly: false },
 	);
-	context.subscriptions.push(new vscode.Disposable(() => {
+	const decorationProvider = vscode.window.registerFileDecorationProvider(provider);
+	context.subscriptions.push(decorationProvider, new vscode.Disposable(() => {
 		fsProvider.dispose();
 		provider.dispose();
 	}));

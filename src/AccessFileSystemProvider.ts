@@ -21,12 +21,15 @@ export interface AccessObjectSearchResult {
     preview: string;
 }
 
-export class AccessFileSystemProvider implements vscode.FileSystemProvider, vscode.Disposable {
+export class AccessFileSystemProvider implements vscode.FileSystemProvider, vscode.FileDecorationProvider, vscode.Disposable {
     private readonly changedEmitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
+    private readonly decorationsChangedEmitter = new vscode.EventEmitter<vscode.Uri[]>();
     readonly onDidChangeFile = this.changedEmitter.event;
+    readonly onDidChangeFileDecorations = this.decorationsChangedEmitter.event;
     private readonly timestamp = Date.now();
     private readonly bridge = new AccessBridge();
     private readonly fileMtimes = new Map<string, number>();
+    private readonly hiddenOrSystemFiles = new Set<string>();
 
     watch(_uri: vscode.Uri, _options: { recursive: boolean; excludes: readonly string[] }): vscode.Disposable {
         return new vscode.Disposable(() => undefined);
@@ -34,6 +37,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
     dispose(): void {
         this.changedEmitter.dispose();
+        this.decorationsChangedEmitter.dispose();
     }
 
     connectTo(instance: AccessInstance): void {
@@ -84,7 +88,38 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             throw vscode.FileSystemError.FileNotADirectory(uri);
         }
 
-        return this.bridge.getNames(category).map(name => [`${name}.${this.getExtension(category)}`, vscode.FileType.File]);
+        const names = this.bridge.getNames(category);
+        const changedDecorations: vscode.Uri[] = [];
+        for (const name of names) {
+            const objectUri = vscode.Uri.joinPath(uri, `${name}.${this.getExtension(category)}`);
+            const key = this.fileKey(objectUri);
+            try {
+                if (this.bridge.isHiddenOrSystem(category, name)) {
+                    this.hiddenOrSystemFiles.add(key);
+                } else {
+                    this.hiddenOrSystemFiles.delete(key);
+                }
+            } catch (error) {
+                console.warn(`Could not determine whether Access object "${name}" is hidden or a system object:`, error);
+                this.hiddenOrSystemFiles.delete(key);
+            }
+            changedDecorations.push(objectUri);
+        }
+        if (changedDecorations.length) {
+            this.decorationsChangedEmitter.fire(changedDecorations);
+        }
+        return names.map(name => [`${name}.${this.getExtension(category)}`, vscode.FileType.File]);
+    }
+
+    provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+        if (!this.hiddenOrSystemFiles.has(this.fileKey(uri))) {
+            return undefined;
+        }
+        return new vscode.FileDecoration(
+            undefined,
+            'Hidden or system Access object',
+            new vscode.ThemeColor('disabledForeground'),
+        );
     }
 
     readFile(uri: vscode.Uri): Uint8Array {
