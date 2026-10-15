@@ -262,16 +262,29 @@ export class AccessBridge {
     }
 
     private writeCodeModule(name: string, content: string) {
-        try {
-            const { lineCount, codeModule } = this.getCodeModule(name);
-            codeModule.DeleteLines(1, lineCount);
-            codeModule.AddFromString(content);
-        } catch (error) {
-            // new code module
-            const newModule = this.access.VBE.ActiveVBProject.VBComponents.Add(this.codeTypes.vbext_ct_StdModule);
-            newModule.Name = name;
-            this.access.DoCmd.Save(this.acObjectType.acModule, name);
+        const components = this.access.VBE.ActiveVBProject.VBComponents;
+        let existingModule = false;
+        for (let i = 1; i <= components.Count; i++) {
+            if (components.Item(i).Name.toLowerCase() === name.toLowerCase()) {
+                existingModule = true;
+                break;
+            }
         }
+
+        if (existingModule) {
+            const { lineCount, codeModule } = this.getCodeModule(name);
+            if (lineCount > 0) {
+                codeModule.DeleteLines(1, lineCount);
+            }
+            codeModule.AddFromString(content);
+            return;
+        }
+
+        const newModule = components.Add(this.codeTypes.vbext_ct_StdModule);
+        newModule.Name = name;
+        newModule.CodeModule.DeleteLines(1, newModule.CodeModule.CountOfLines);
+        newModule.CodeModule.AddFromString(content);
+        this.access.DoCmd.Save(this.acObjectType.acModule, name);
     }
 
     private renameCodeModule(oldName: string, newName: string) {
