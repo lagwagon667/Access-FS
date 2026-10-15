@@ -4,9 +4,19 @@ import * as assert from 'assert';
 // as well as import your extension to test it
 import * as vscode from 'vscode';
 import { AccessFileSystemProvider } from '../AccessFileSystemProvider';
-import { parseTableData } from '../tableData';
+import {
+	formatTableSql,
+	parseTableSql,
+	renameTableSql,
+	sameTableIndexes,
+	sameTableSchema,
+} from '../tableData';
 import { getComCollectionCount } from '../comCollection';
-import { isDaoHiddenOrSystem, isMsysHiddenOrSystem } from '../accessObjectFlags';
+import {
+	isAccessSystemTable,
+	isDaoHiddenOrSystem,
+	isMsysHiddenOrSystem,
+} from '../accessObjectFlags';
 // import * as myExtension from '../../extension';
 
 suite('Extension Test Suite', () => {
@@ -51,35 +61,196 @@ suite('Extension Test Suite', () => {
 		provider.dispose();
 	});
 
-	test('parses a table snapshot and restores Access date values', () => {
-		const columns = [
-			{ name: 'Id', type: 4, attributes: 17 },
-			{ name: 'Name', type: 10, attributes: 32 },
-			{ name: 'Created', type: 8, attributes: 32 },
-		];
-		const date = '2026-10-15T12:00:00.000Z';
-		const rows = parseTableData(JSON.stringify({
-			format: 'accessfs-table-v1',
-			table: 'People',
-			columns,
-			rows: [{ Id: 1, Name: 'Ada', Created: { $accessfs: 'date', value: date } }],
-		}), 'People', columns);
+	test('supports creating an empty SQL file for a new table', () => {
+		const provider = new AccessFileSystemProvider();
+		const uri = vscode.Uri.parse('accessfs:/tables/NewPeople.sql');
 
-		assert.deepStrictEqual(rows, [[1, 'Ada', new Date(date)]]);
+		assert.strictEqual(
+			provider.stat(vscode.Uri.parse('accessfs:/tables')).permissions,
+			undefined,
+			'the tables directory should allow creating files',
+		);
+		provider.writeFile(uri, Buffer.alloc(0), { create: true, overwrite: true });
+		assert.strictEqual(provider.stat(uri).type, vscode.FileType.File);
+		assert.strictEqual(provider.readFile(uri).byteLength, 0);
+
+		provider.delete(uri);
+		assert.throws(() => provider.stat(uri));
+		provider.dispose();
 	});
 
-	test('rejects table snapshots whose schema does not match Access', () => {
-		const columns = [{ name: 'Id', type: 4, attributes: 17 }];
-		const content = JSON.stringify({
-			format: 'accessfs-table-v1',
-			table: 'People',
-			columns: [{ name: 'Id', type: 3, attributes: 17 }],
-			rows: [{ Id: 1 }],
-		});
+	test('renames a pending table SQL file before it has been created in Access', () => {
+		const provider = new AccessFileSystemProvider();
+		const oldUri = vscode.Uri.parse('accessfs:/tables/NewPeople.sql');
+		const newUri = vscode.Uri.parse('accessfs:/tables/RenamedPeople.sql');
+		provider.writeFile(oldUri, Buffer.alloc(0), { create: true, overwrite: true });
 
+		provider.rename(oldUri, newUri, { overwrite: false });
+
+		assert.strictEqual(provider.stat(newUri).type, vscode.FileType.File);
+		assert.strictEqual(provider.readFile(newUri).byteLength, 0);
+		assert.throws(() => provider.stat(oldUri));
+		provider.delete(newUri);
+		provider.dispose();
+	});
+
+	test('formats table schema and rows as SQL and parses Access date values', () => {
+		const columns = [
+			{ name: 'Id', type: 4, attributes: 17, size: 4, decimalPlaces: 0, required: true },
+			{ name: 'Name', type: 10, attributes: 32, size: 100, decimalPlaces: 0, required: false },
+			{ name: 'Created', type: 8, attributes: 32, size: 8, decimalPlaces: 0, required: false },
+		];
+		const created = new Date('2026-10-15T12:00:00.000Z');
+		const sql = formatTableSql('People', columns, [
+			{ Id: 1, Name: "Ada's data", Created: { $accessfs: 'date', value: created.toISOString() } },
+		]);
+		const parsed = parseTableSql(sql);
+
+		assert.match(sql, /CREATE TABLE \[People\]/);
+		assert.match(sql, /INSERT INTO \[People\]/);
+		assert.match(sql, /'Ada''s data'/);
+		assert.strictEqual(parsed.tableName, 'People');
+		assert.deepStrictEqual(parsed.rows, [[1, "Ada's data", created]]);
+		assert.ok(sameTableSchema(columns, parsed.columns));
+	});
+
+	test('formats and parses primary, unique, and regular indexes', () => {
+		const columns = [
+			{ name: 'Id', type: 4, attributes: 17, size: 4, decimalPlaces: 0, required: true },
+			{ name: 'Name', type: 10, attributes: 32, size: 100, decimalPlaces: 0, required: false },
+			{ name: 'Created', type: 8, attributes: 32, size: 8, decimalPlaces: 0, required: false },
+		];
+		const indexes = [
+			{
+				name: 'PrimaryKey',
+				primary: true,
+				unique: true,
+				fields: [{ name: 'Id', descending: false }],
+			},
+			{
+				name: 'NameDateUnique',
+				primary: false,
+				unique: true,
+				fields: [
+					{ name: 'Name', descending: false },
+					{ name: 'Created', descending: true },
+				],
+			},
+			{
+				name: 'CreatedIndex',
+				primary: false,
+				unique: false,
+				fields: [{ name: 'Created', descending: false }],
+			},
+		];
+		const sql = formatTableSql('People', columns, [], indexes);
+		const parsed = parseTableSql(sql);
+
+		assert.match(sql, /CREATE UNIQUE INDEX \[PrimaryKey\] ON \[People\] \(\[Id\]\) WITH PRIMARY;/);
+		assert.match(sql, /CREATE UNIQUE INDEX \[NameDateUnique\]/);
+		assert.match(sql, /CREATE INDEX \[CreatedIndex\]/);
+		assert.ok(sameTableIndexes(indexes, parsed.indexes));
+		assert.strictEqual(parsed.indexStatements.length, indexes.length);
+	});
+
+	test('renames copied table SQL to the destination filename', () => {
+		const sourceSql = [
+			'CREATE TABLE [People] ([Id] COUNTER NOT NULL, [Name] TEXT(40));',
+			'CREATE UNIQUE INDEX [PrimaryKey] ON [People] ([Id]) WITH PRIMARY;',
+			"INSERT INTO [People] ([Id], [Name]) VALUES (1, 'Ada');",
+		].join('\n');
+		const renamed = parseTableSql(renameTableSql(sourceSql, 'PeopleCopy'));
+
+		assert.strictEqual(renamed.tableName, 'PeopleCopy');
+		assert.deepStrictEqual(renamed.rows, [[1, 'Ada']]);
+		assert.strictEqual(renamed.indexes[0].primary, true);
+		assert.match(renamed.indexStatements[0], /ON \[PeopleCopy\]/);
+	});
+
+	test('rejects an index that references an unknown table field', () => {
 		assert.throws(
-			() => parseTableData(content, 'People', columns),
-			/The schema in the table document does not match/,
+			() => parseTableSql([
+				'CREATE TABLE [People] ([Id] LONG);',
+				'CREATE INDEX [NameIndex] ON [People] ([Name]);',
+			].join('\n')),
+			/index references unknown field "Name"/i,
+		);
+	});
+
+	test('accepts numeric AutoNumber values for rows to be inserted', () => {
+		const columns = [
+			{ name: 'Id', type: 4, attributes: 17, size: 4, decimalPlaces: 0, required: true },
+			{ name: 'Name', type: 10, attributes: 32, size: 100, decimalPlaces: 0, required: false },
+		];
+		const sql = formatTableSql('People', columns, [{ Id: 932, Name: 'New row' }]);
+
+		assert.deepStrictEqual(parseTableSql(sql).rows, [[932, 'New row']]);
+	});
+
+	test('parses a changed table schema and reports it as different', () => {
+		const columns = [{ name: 'Id', type: 4, attributes: 17, size: 4, decimalPlaces: 0, required: true }];
+		const changedSchema = [
+			'CREATE TABLE [People] (',
+			'    [Id] SHORT NOT NULL',
+			');',
+		].join('\n');
+		const parsed = parseTableSql(changedSchema);
+
+		assert.strictEqual(parsed.tableName, 'People');
+		assert.strictEqual(parsed.columns[0].type, 3);
+		assert.strictEqual(sameTableSchema(columns, parsed.columns), false);
+	});
+
+	test('does not treat unrepresented fixed-field metadata as a schema change', () => {
+		const currentColumns = [
+			{ name: 'Amount', type: 5, attributes: 32, size: 8, decimalPlaces: 4, required: false },
+		];
+		const parsed = parseTableSql('CREATE TABLE [Ledger] ([Amount] CURRENCY);');
+
+		assert.ok(sameTableSchema(currentColumns, parsed.columns));
+	});
+
+	test('parses a new table definition and rows that omit an AutoNumber field', () => {
+		const parsed = parseTableSql([
+			'CREATE TABLE [NewPeople] (',
+			'    [Id] COUNTER NOT NULL,',
+			'    [Name] TEXT(80) NOT NULL',
+			');',
+			'INSERT INTO [NewPeople] ([Name]) VALUES (\'Ada\');',
+		].join('\n'));
+
+		assert.strictEqual(parsed.tableName, 'NewPeople');
+		assert.deepStrictEqual(parsed.rows, [[null, 'Ada']]);
+		assert.strictEqual(parsed.columns[1].size, 80);
+	});
+
+	test('keeps numeric precision commas inside a field definition', () => {
+		const parsed = parseTableSql('CREATE TABLE [Ledger] ([Amount] NUMERIC(12, 2));');
+
+		assert.strictEqual(parsed.columns.length, 1);
+		assert.strictEqual(parsed.columns[0].size, 12);
+		assert.strictEqual(parsed.columns[0].decimalPlaces, 2);
+	});
+
+	test('parses escaped closing brackets in table and field names', () => {
+		const columns = [
+			{ name: 'Value]Text', type: 10, attributes: 32, size: 10, decimalPlaces: 0, required: false },
+		];
+		const sql = formatTableSql('People]Archive', columns, [{ 'Value]Text': 'Ada' }]);
+		const parsed = parseTableSql(sql);
+
+		assert.strictEqual(parsed.tableName, 'People]Archive');
+		assert.strictEqual(parsed.columns[0].name, 'Value]Text');
+		assert.deepStrictEqual(parsed.rows, [['Ada']]);
+	});
+
+	test('rejects invalid row values before a schema rebuild can start', () => {
+		assert.throws(
+			() => parseTableSql([
+				'CREATE TABLE [People] ([Name] TEXT(3));',
+				"INSERT INTO [People] ([Name]) VALUES ('Too long');",
+			].join('\n')),
+			/invalid value for field "Name"/,
 		);
 	});
 
@@ -103,6 +274,15 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(isMsysHiddenOrSystem(0), false);
 		assert.strictEqual(isMsysHiddenOrSystem(1), true);
 		assert.strictEqual(isMsysHiddenOrSystem(2), true);
+	});
+
+	test('recognizes Access system tables by their reserved MSys names', () => {
+		assert.strictEqual(isAccessSystemTable('MSysACEs'), true);
+		assert.strictEqual(isAccessSystemTable('MSysObjects'), true);
+		assert.strictEqual(isAccessSystemTable('MSysAccessStorage'), true);
+		assert.strictEqual(isAccessSystemTable('MSysNameMap'), true);
+		assert.strictEqual(isAccessSystemTable('UserData'), false);
+		assert.strictEqual(isAccessSystemTable('USysConfig'), false);
 	});
 
 	test('Sample test', () => {

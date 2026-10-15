@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AccessBridge, type AccessInstance } from './AccessBridge';
+import { renameTableSql } from './tableData';
 
 const categories = {
     tables: '$access.CurrentData.AllTables',
@@ -30,6 +31,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
     private readonly bridge = new AccessBridge();
     private readonly fileMtimes = new Map<string, number>();
     private readonly hiddenOrSystemFiles = new Set<string>();
+    private readonly pendingTableFiles = new Map<string, string>();
 
     watch(_uri: vscode.Uri, _options: { recursive: boolean; excludes: readonly string[] }): vscode.Disposable {
         return new vscode.Disposable(() => undefined);
@@ -55,10 +57,18 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             throw vscode.FileSystemError.FileNotFound(uri);
         }
         if (parts.length === 1) {
-            return this.directoryStat();
+            return category === 'tables' ? this.directoryStat(true) : this.directoryStat();
         }
         if (parts.length !== 2) {
             throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        if (category === 'tables' && this.pendingTableFiles.has(this.fileKey(uri))) {
+            return {
+                type: vscode.FileType.File,
+                ctime: this.timestamp,
+                mtime: this.timestamp,
+                size: 0,
+            };
         }
 
         const content = this.getObjectContent(category, parts[1]);
@@ -89,10 +99,22 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
         }
 
         const names = this.bridge.getNames(category);
+        if (category === 'tables') {
+            for (const [key, name] of this.pendingTableFiles) {
+                if (key.startsWith(`${this.fileKey(uri)}/`)) {
+                    names.push(name);
+                }
+            }
+        }
         const changedDecorations: vscode.Uri[] = [];
         for (const name of names) {
             const objectUri = vscode.Uri.joinPath(uri, `${name}.${this.getExtension(category)}`);
             const key = this.fileKey(objectUri);
+            if (this.pendingTableFiles.has(key)) {
+                this.hiddenOrSystemFiles.delete(key);
+                changedDecorations.push(objectUri);
+                continue;
+            }
             try {
                 if (this.bridge.isHiddenOrSystem(category, name)) {
                     this.hiddenOrSystemFiles.add(key);
@@ -123,6 +145,9 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
     }
 
     readFile(uri: vscode.Uri): Uint8Array {
+        if (this.pendingTableFiles.has(this.fileKey(uri))) {
+            return Buffer.alloc(0);
+        }
         const { category, name } = this.getCategoryAndName(uri);
         return this.getObjectContent(category, name);
     }
@@ -180,7 +205,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
         throw vscode.FileSystemError.NoPermissions(uri);
     }
 
-    writeFile(uri: vscode.Uri, content: Uint8Array): void {
+    writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean }): void {
         const { category, name } = this.getCategoryAndName(uri);
 
         const extension = `.${this.getExtension(category)}`;
@@ -191,12 +216,50 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
         switch (category) {
             case 'tables':
-                this.bridge.write(category, accessObjectName, new TextDecoder('utf-8').decode(content));
-                this.fileMtimes.set(
-                    this.fileKey(uri),
-                    Math.max(Date.now(), (this.fileMtimes.get(this.fileKey(uri)) ?? this.timestamp) + 1),
+                const tableSql = new TextDecoder('utf-8').decode(content);
+                const fileKey = this.fileKey(uri);
+                const isPendingTable = this.pendingTableFiles.has(fileKey);
+                const isExclusiveCreate = options.create && !options.overwrite;
+                const isNewTable = isExclusiveCreate || isPendingTable;
+                if (options.create && !tableSql.trim()) {
+                    this.pendingTableFiles.set(fileKey, accessObjectName);
+                    this.changedEmitter.fire([{ type: vscode.FileChangeType.Created, uri }]);
+                    return;
+                }
+                if (!tableSql.trim() && isPendingTable) {
+                    return;
+                }
+
+                const sqlToWrite = options.create || isPendingTable
+                    ? renameTableSql(tableSql, accessObjectName)
+                    : tableSql;
+                this.bridge.write(category, accessObjectName, sqlToWrite, isNewTable);
+                this.pendingTableFiles.delete(fileKey);
+
+                const actualTableSql = this.bridge.read(category, accessObjectName);
+                if (actualTableSql === undefined) {
+                    throw vscode.FileSystemError.Unavailable(
+                        `Could not read back Access table "${accessObjectName}" after saving.`,
+                    );
+                }
+
+                this.markFileChanged(
+                    uri,
+                    isPendingTable ? vscode.FileChangeType.Changed : (
+                        isNewTable ? vscode.FileChangeType.Created : vscode.FileChangeType.Changed
+                    ),
                 );
-                this.changedEmitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+                if (this.normalizeLineEndings(sqlToWrite) !== this.normalizeLineEndings(actualTableSql)) {
+                    setTimeout(() => {
+                        void this.reconcileOpenDocument(uri, sqlToWrite, actualTableSql).catch(error => {
+                            const message = error instanceof Error ? error.message : String(error);
+                            console.error(`Failed to refresh ${uri.toString()} after Access generated table values:`, error);
+                            void vscode.window.showErrorMessage(
+                                `Failed to refresh "${uri.path}" from Access: ${message}`,
+                            );
+                        });
+                    }, 0);
+                }
                 return;
             case 'modules':
             case 'classes':
@@ -212,17 +275,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
                 const normalizedSource = this.normalizeLineEndings(actualSource);
                 if (this.normalizeLineEndings(code) !== normalizedSource) {
-                    const key = this.fileKey(uri);
-                    this.fileMtimes.set(
-                        key,
-                        Math.max(Date.now(), (this.fileMtimes.get(key) ?? this.timestamp) + 1),
-                    );
-                    this.changedEmitter.fire([
-                        {
-                            type: vscode.FileChangeType.Changed,
-                            uri
-                        }
-                    ]);
+                    this.markFileChanged(uri);
                     setTimeout(() => {
                         void this.reconcileOpenDocument(uri, code, normalizedSource).catch(error => {
                             const message = error instanceof Error ? error.message : String(error);
@@ -240,15 +293,28 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
     delete(uri: vscode.Uri): void {
         const { category, name } = this.getCategoryAndName(uri);
+        if (category === 'tables' && this.pendingTableFiles.delete(this.fileKey(uri))) {
+            this.changedEmitter.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
+            return;
+        }
         const extension = `.${this.getExtension(category)}`;
         if (!name.endsWith(extension)) {
             throw vscode.FileSystemError.FileNotFound(name);
         }
         const accessObjectName = name.slice(0, -extension.length);
         this.bridge.delete(category, accessObjectName);
+        if (category === 'tables') {
+            this.fileMtimes.delete(this.fileKey(uri));
+            this.hiddenOrSystemFiles.delete(this.fileKey(uri));
+            this.changedEmitter.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
+        }
     }
 
-    rename(oldUri: vscode.Uri, newUri: vscode.Uri): void {
+    rename(
+        oldUri: vscode.Uri,
+        newUri: vscode.Uri,
+        _options: { overwrite: boolean },
+    ): void {
         const { category: oldCategory, name: oldName } = this.getCategoryAndName(oldUri);
         const { category: newCategory, name: newName } = this.getCategoryAndName(newUri);
 
@@ -264,6 +330,25 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
         const oldAccessObjectName = oldName.slice(0, -extension.length);
         const newAccessObjectName = newName.slice(0, -extension.length);
 
+        if (newCategory === 'tables') {
+            const oldKey = this.fileKey(oldUri);
+            const newKey = this.fileKey(newUri);
+            const pendingName = this.pendingTableFiles.get(oldKey);
+            if (pendingName !== undefined) {
+                this.pendingTableFiles.delete(oldKey);
+                this.pendingTableFiles.set(newKey, newAccessObjectName);
+            } else {
+                this.bridge.rename(newCategory, oldAccessObjectName, newAccessObjectName);
+            }
+            this.fileMtimes.delete(oldKey);
+            this.hiddenOrSystemFiles.delete(oldKey);
+            this.changedEmitter.fire([
+                { type: vscode.FileChangeType.Deleted, uri: oldUri },
+                { type: vscode.FileChangeType.Created, uri: newUri },
+            ]);
+            return;
+        }
+
         this.bridge.rename(newCategory, oldAccessObjectName, newAccessObjectName);
     }
 
@@ -273,6 +358,18 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
     private fileKey(uri: vscode.Uri): string {
         return uri.toString().toLowerCase();
+    }
+
+    private markFileChanged(
+        uri: vscode.Uri,
+        type: vscode.FileChangeType = vscode.FileChangeType.Changed,
+    ): void {
+        const key = this.fileKey(uri);
+        this.fileMtimes.set(
+            key,
+            Math.max(Date.now(), (this.fileMtimes.get(key) ?? this.timestamp) + 1),
+        );
+        this.changedEmitter.fire([{ type, uri }]);
     }
 
     private async reconcileOpenDocument(
@@ -314,20 +411,20 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             : undefined;
     }
 
-    private directoryStat(): vscode.FileStat {
+    private directoryStat(writable = false): vscode.FileStat {
         return {
             type: vscode.FileType.Directory,
             ctime: this.timestamp,
             mtime: this.timestamp,
             size: 0,
-            permissions: vscode.FilePermission.Readonly,
+            permissions: writable ? undefined : vscode.FilePermission.Readonly,
         };
     }
 
     private getExtension(category: Category): string {
         switch (category) {
             case 'tables':
-                return 'json';
+                return 'sql';
             case 'queries':
                 return 'sql';
             case 'forms':

@@ -3,9 +3,21 @@ import type { Category } from './AccessFileSystemProvider';
 import type { Object as WinaxObject } from 'winax';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { parseTableData, type AccessTableColumn } from './tableData';
+import {
+    formatTableSql,
+    parseTableSql,
+    sameTableSchema,
+    sameTableIndexes,
+    type AccessTableColumn,
+    type AccessTableIndex,
+    type ParsedTableSql,
+} from './tableData';
 import { getComCollectionCount } from './comCollection';
-import { isDaoHiddenOrSystem, isMsysHiddenOrSystem } from './accessObjectFlags';
+import {
+    isAccessSystemTable,
+    isDaoHiddenOrSystem,
+    isMsysHiddenOrSystem,
+} from './accessObjectFlags';
 
 declare global {
     interface ActiveXObjectOptions {
@@ -19,13 +31,6 @@ export interface AccessInstance {
     windowTitles: string[];
     databasePath: string;
     databaseName: string;
-}
-
-interface AccessTableDocument {
-    format: 'accessfs-table-v1';
-    table: string;
-    columns: AccessTableColumn[];
-    rows: Record<string, unknown>[];
 }
 
 export class AccessBridge {
@@ -63,6 +68,7 @@ export class AccessBridge {
         acTable: 0,
         acTableDataMacro: 12,
     };
+    private readonly acSaveNo = 2;
 
     constructor() {
         if (process.platform !== 'win32') {
@@ -221,10 +227,10 @@ export class AccessBridge {
         );
     }
 
-    public write(category: Category, name: string, content: string) {
+    public write(category: Category, name: string, content: string, createOnly = false) {
         switch (category) {
             case 'tables':
-                return this.writeTable(name, content);
+                return this.writeTable(name, content, createOnly);
             case 'modules':
             case 'classes':
                 return this.writeCodeModule(name, content);
@@ -256,6 +262,9 @@ export class AccessBridge {
     }
 
     public isHiddenOrSystem(category: Category, name: string): boolean {
+        if (category === 'tables' && isAccessSystemTable(name)) {
+            return true;
+        }
         if (category === 'tables' || category === 'queries') {
             const database = this.access.CurrentDb();
             const collection = category === 'tables' ? database.TableDefs : database.QueryDefs;
@@ -287,6 +296,8 @@ export class AccessBridge {
 
     public rename(category: Category, oldName: string, newName: string) {
         switch (category) {
+            case 'tables':
+                return this.renameTable(oldName, newName);
             case 'modules':
                 return this.renameCodeModule(oldName, newName);
         }
@@ -297,6 +308,8 @@ export class AccessBridge {
 
     public delete(category: Category, name: string) {
         switch (category) {
+            case 'tables':
+                return this.deleteTable(name);
             case 'modules':
                 return this.deleteCodeModule(name);
         }
@@ -330,6 +343,9 @@ export class AccessBridge {
                 name: field.Name as string,
                 type: field.Type as number,
                 attributes: field.Attributes as number,
+                size: field.Size as number,
+                decimalPlaces: field.DecimalPlaces as number,
+                required: field.Required as boolean,
             };
             if (!supportedTypes.has(column.type)) {
                 throw vscode.FileSystemError.Unavailable(
@@ -341,8 +357,94 @@ export class AccessBridge {
         return columns;
     }
 
+    private renameTable(oldName: string, newName: string): void {
+        const table = this.access.CurrentData.AllTables.Item(oldName);
+        if (typeof table.IsLoaded !== 'boolean') {
+            throw vscode.FileSystemError.Unavailable(
+                `Could not determine whether Access table "${oldName}" is open.`,
+            );
+        }
+        if (table.IsLoaded) {
+            this.access.DoCmd.Close(
+                this.acObjectType.acTable,
+                oldName,
+                this.acSaveNo,
+            );
+        }
+        this.access.DoCmd.Rename(
+            newName,
+            this.acObjectType.acTable,
+            oldName,
+        );
+        this.access.RefreshDatabaseWindow();
+    }
+
+    private deleteTable(tableName: string): void {
+        const table = this.access.CurrentData.AllTables.Item(tableName);
+        if (typeof table.IsLoaded !== 'boolean') {
+            throw vscode.FileSystemError.Unavailable(
+                `Could not determine whether Access table "${tableName}" is open.`,
+            );
+        }
+        if (table.IsLoaded) {
+            this.access.DoCmd.Close(
+                this.acObjectType.acTable,
+                tableName,
+                this.acSaveNo,
+            );
+        }
+        this.access.DoCmd.DeleteObject(
+            this.acObjectType.acTable,
+            tableName,
+        );
+        this.access.RefreshDatabaseWindow();
+    }
+
+    private getTableIndexes(tableName: string): AccessTableIndex[] {
+        const indexes = this.access.CurrentDb().TableDefs.Item(tableName).Indexes;
+        const indexCount = getComCollectionCount(indexes, `indexes for table "${tableName}"`);
+        const tableIndexes: AccessTableIndex[] = [];
+
+        for (let index = 0; index < indexCount; index++) {
+            const daoIndex = indexes.Item(index);
+            const fields = daoIndex.Fields;
+            const fieldCount = getComCollectionCount(
+                fields,
+                `fields for index "${String(daoIndex.Name)}" on table "${tableName}"`,
+            );
+            const indexFields: AccessTableIndex['fields'] = [];
+            for (let fieldIndex = 0; fieldIndex < fieldCount; fieldIndex++) {
+                const daoField = fields.Item(fieldIndex);
+                const attributes = daoField.Attributes;
+                if (typeof attributes !== 'number') {
+                    throw vscode.FileSystemError.Unavailable(
+                        `Access returned invalid attributes for field ${fieldIndex + 1} of index "${String(daoIndex.Name)}".`,
+                    );
+                }
+                indexFields.push({
+                    name: String(daoField.Name),
+                    descending: (attributes & 1) !== 0,
+                });
+            }
+
+            if (typeof daoIndex.Primary !== 'boolean' || typeof daoIndex.Unique !== 'boolean') {
+                throw vscode.FileSystemError.Unavailable(
+                    `Access returned invalid key flags for index "${String(daoIndex.Name)}" on table "${tableName}".`,
+                );
+            }
+            tableIndexes.push({
+                name: String(daoIndex.Name),
+                primary: daoIndex.Primary,
+                unique: daoIndex.Unique,
+                fields: indexFields,
+            });
+        }
+        return tableIndexes;
+    }
+
     private readTable(tableName: string): string {
         const columns = this.getTableColumns(tableName);
+        const indexes = this.getTableIndexes(tableName);
         const escapedTableName = tableName.replace(/]/g, ']]');
         const database = this.access.CurrentDb();
         const recordset = database.OpenRecordset(`SELECT * FROM [${escapedTableName}]`, 2);
@@ -363,29 +465,73 @@ export class AccessBridge {
             recordset.Close();
         }
 
-        const document: AccessTableDocument = {
-            format: 'accessfs-table-v1',
-            table: tableName,
-            columns,
-            rows,
-        };
-        return `${JSON.stringify(document, null, 2)}\n`;
+        return formatTableSql(tableName, columns, rows, indexes);
     }
 
-    private writeTable(tableName: string, content: string): void {
-        const columns = this.getTableColumns(tableName);
-        let rows: unknown[][];
+    private writeTable(tableName: string, content: string, createOnly: boolean): void {
+        let parsed: ParsedTableSql;
         try {
-            rows = parseTableData(content, tableName, columns);
+            parsed = parseTableSql(content);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             throw vscode.FileSystemError.Unavailable(detail);
         }
+        if (parsed.tableName.toLowerCase() !== tableName.toLowerCase()) {
+            throw vscode.FileSystemError.Unavailable(
+                `The CREATE TABLE name "${parsed.tableName}" must match the file name "${tableName}".`,
+            );
+        }
+
+        const database = this.access.CurrentDb();
+        const tableDefs = database.TableDefs;
+        const tableDefCount = getComCollectionCount(tableDefs, 'table definitions');
+        let tableExists = false;
+        for (let index = 0; index < tableDefCount; index++) {
+            if (String(tableDefs.Item(index).Name).toLowerCase() === tableName.toLowerCase()) {
+                tableExists = true;
+                break;
+            }
+        }
+        if (createOnly && tableExists) {
+            throw vscode.FileSystemError.FileExists(tableName);
+        }
+
+        let rebuild = !tableExists;
+        if (tableExists) {
+            const currentColumns = this.getTableColumns(tableName);
+            const currentIndexes = this.getTableIndexes(tableName);
+            rebuild = !sameTableSchema(currentColumns, parsed.columns)
+                || !sameTableIndexes(currentIndexes, parsed.indexes);
+        }
+        if (rebuild) {
+            const escapedTableName = tableName.replace(/]/g, ']]');
+            if (tableExists) {
+                const accessTable = this.access.CurrentData.AllTables.Item(tableName);
+                if (typeof accessTable.IsLoaded !== 'boolean') {
+                    throw vscode.FileSystemError.Unavailable(
+                        `Could not determine whether Access table "${tableName}" is open.`,
+                    );
+                }
+                if (accessTable.IsLoaded) {
+                    this.access.DoCmd.Close(
+                        this.acObjectType.acTable,
+                        tableName,
+                        this.acSaveNo,
+                    );
+                }
+                database.Execute(`DROP TABLE [${escapedTableName}]`, 128);
+            }
+            database.Execute(`${parsed.createStatement};`, 128);
+            for (const indexStatement of parsed.indexStatements) {
+                database.Execute(indexStatement, 128);
+            }
+        }
 
         const escapedTableName = tableName.replace(/]/g, ']]');
-        const database = this.access.CurrentDb();
         const recordset = database.OpenRecordset(`SELECT * FROM [${escapedTableName}]`, 2);
         const workspace = this.access.DBEngine.Workspaces.Item(0);
+        const columns = this.getTableColumns(tableName);
+        const rows = parsed.rows;
         let transactionStarted = false;
 
         try {
@@ -393,7 +539,7 @@ export class AccessBridge {
             transactionStarted = true;
 
             let existingRows = 0;
-            if (!recordset.EOF) {
+            if (!rebuild && !recordset.EOF) {
                 recordset.MoveLast();
                 existingRows = recordset.RecordCount;
                 recordset.MoveFirst();
@@ -424,9 +570,12 @@ export class AccessBridge {
                                     `AutoNumber field "${column.name}" in table "${tableName}" cannot be changed or reordered.`,
                                 );
                             }
-                        } else if (value !== null) {
+                        } else if (
+                            value !== null
+                            && (typeof value !== 'number' || !Number.isSafeInteger(value))
+                        ) {
                             throw vscode.FileSystemError.Unavailable(
-                                `New rows must have a null value for AutoNumber field "${column.name}".`,
+                                `AutoNumber field "${column.name}" for a new row must be an integer; Access will generate and replace its value.`,
                             );
                         }
                         continue;
@@ -462,6 +611,9 @@ export class AccessBridge {
             throw error;
         } finally {
             recordset.Close();
+        }
+        if (rebuild) {
+            this.access.RefreshDatabaseWindow();
         }
     }
 
