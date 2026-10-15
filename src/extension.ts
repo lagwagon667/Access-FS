@@ -71,6 +71,58 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(command);
+
+	const searchCommand = vscode.commands.registerCommand('accessfs.searchObjects', async () => {
+		const query = await vscode.window.showInputBox({
+			prompt: 'Search Access object names and module source',
+			placeHolder: 'Enter text to search',
+			ignoreFocusOut: true,
+		});
+		if (!query?.trim()) {
+			return;
+		}
+
+		let results;
+		try {
+			results = provider.searchObjects(query.trim());
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			void vscode.window.showErrorMessage(`Could not search Access objects: ${message}`);
+			return;
+		}
+
+		if (results.length === 0) {
+			void vscode.window.showInformationMessage(`No Access objects matched "${query}".`);
+			return;
+		}
+
+		const selectedResult = await vscode.window.showQuickPick(
+			results.map(result => ({
+				label: result.objectName,
+				description: result.line ? `${result.category}, line ${result.line}` : result.category,
+				detail: result.preview,
+				result,
+			})),
+			{ placeHolder: `${results.length} Access search result(s)` },
+		);
+		if (!selectedResult) {
+			return;
+		}
+
+		try {
+			const document = await vscode.workspace.openTextDocument(selectedResult.result.uri);
+			const editor = await vscode.window.showTextDocument(document);
+			if (selectedResult.result.line) {
+				const position = new vscode.Position(selectedResult.result.line - 1, 0);
+				editor.selection = new vscode.Selection(position, position);
+				editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			void vscode.window.showErrorMessage(`Could not open "${selectedResult.result.objectName}": ${message}`);
+		}
+	});
+	context.subscriptions.push(searchCommand);
 }
 
 // This method is called when your extension is deactivated

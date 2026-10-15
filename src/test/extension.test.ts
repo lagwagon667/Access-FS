@@ -20,6 +20,10 @@ suite('Extension Test Suite', () => {
 			(await vscode.commands.getCommands(true)).includes('accessfs.addToWorkspace'),
 			'accessfs.addToWorkspace should be registered after activation',
 		);
+		assert.ok(
+			(await vscode.commands.getCommands(true)).includes('accessfs.searchObjects'),
+			'accessfs.searchObjects should be registered after activation',
+		);
 		assert.strictEqual(
 			require.cache[require.resolve('winax')],
 			undefined,

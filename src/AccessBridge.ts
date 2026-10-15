@@ -250,15 +250,13 @@ export class AccessBridge {
         const vbProject = this.access.VBE.ActiveVBProject;
         const vbComponent = vbProject.VBComponents.Item(name);
         const codeModule = vbComponent.CodeModule;
-        codeModule.CodePane.Show();
         const lineCount = codeModule.CountOfLines;
         return { lineCount, codeModule };
     }
 
     private readCodeModule(name: string): string | undefined {
         const { lineCount, codeModule } = this.getCodeModule(name);
-        const content = codeModule.Lines(1, lineCount);
-        return content;
+        return lineCount > 0 ? codeModule.Lines(1, lineCount) : '';
     }
 
     private writeCodeModule(name: string, content: string) {
@@ -282,7 +280,10 @@ export class AccessBridge {
 
         const newModule = components.Add(this.codeTypes.vbext_ct_StdModule);
         newModule.Name = name;
-        newModule.CodeModule.DeleteLines(1, newModule.CodeModule.CountOfLines);
+        const lineCount = newModule.CodeModule.CountOfLines;
+        if (lineCount > 0) {
+            newModule.CodeModule.DeleteLines(1, lineCount);
+        }
         newModule.CodeModule.AddFromString(content);
         this.access.DoCmd.Save(this.acObjectType.acModule, name);
     }

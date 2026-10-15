@@ -18,6 +18,10 @@
       {
         "command": "accessfs.addToWorkspace",
         "title": "AccessFS: Add Access Objects to Workspace"
+      },
+      {
+        "command": "accessfs.searchObjects",
+        "title": "AccessFS: Search Access Objects"
       }
     ]
   },

@@ -12,6 +12,14 @@ const categories = {
 
 export type Category = keyof typeof categories;
 
+export interface AccessObjectSearchResult {
+    uri: vscode.Uri;
+    category: Category;
+    objectName: string;
+    line?: number;
+    preview: string;
+}
+
 export class AccessFileSystemProvider implements vscode.FileSystemProvider, vscode.Disposable {
     private readonly changedEmitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile = this.changedEmitter.event;
@@ -81,6 +89,55 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
     readFile(uri: vscode.Uri): Uint8Array {
         const { category, name } = this.getCategoryAndName(uri);
         return this.getObjectContent(category, name);
+    }
+
+    searchObjects(query: string): AccessObjectSearchResult[] {
+        const trimmedQuery = query.trim();
+        if (!trimmedQuery) {
+            return [];
+        }
+        const searchTerm = trimmedQuery.toLowerCase();
+        const results: AccessObjectSearchResult[] = [];
+
+        for (const category of Object.keys(categories) as Category[]) {
+            for (const objectName of this.bridge.getNames(category)) {
+                const uri = vscode.Uri.from({
+                    scheme: 'accessfs',
+                    path: `/${category}/${objectName}.${this.getExtension(category)}`,
+                });
+                if (objectName.toLowerCase().includes(searchTerm)) {
+                    results.push({
+                        uri,
+                        category,
+                        objectName,
+                        preview: objectName,
+                    });
+                }
+
+                if (category !== 'modules') {
+                    continue;
+                }
+
+                const source = this.bridge.read(category, objectName);
+                if (source === undefined) {
+                    continue;
+                }
+                const lines = this.normalizeLineEndings(source).split('\n');
+                lines.forEach((line, index) => {
+                    if (line.toLowerCase().includes(searchTerm)) {
+                        results.push({
+                            uri,
+                            category,
+                            objectName,
+                            line: index + 1,
+                            preview: line.trim() || '(blank line)',
+                        });
+                    }
+                });
+            }
+        }
+
+        return results;
     }
 
     createDirectory(uri: vscode.Uri): void {

@@ -10,6 +10,8 @@ Clone this git repo. Open the git repo in VS Code and press `F5` to start debugg
 
 Press `F1` and execute command `AccessFS: Add access objects to workspace`. Select the open database by filename from the list. Access windows without an open database are omitted. You should now be able to browse the selected `.accdb` in the VS Code browser.
 
+Use `AccessFS: Search Access Objects` from the Command Palette to search object names and module source. VS Code's built-in Search view does not search this custom Access filesystem.
+
 > Currently, only code modules can be read and written with this extension.
 
 ### Troubleshooting
