@@ -12,7 +12,9 @@ Press `F1` and execute command `AccessFS: Add access objects to workspace`. Sele
 
 Use `AccessFS: Search Access Objects` from the Command Palette to search object names and module source. VS Code's built-in Search view does not search this custom Access filesystem.
 
-> Currently, only code modules can be read and written with this extension.
+Table files use `.json` snapshots containing the table columns and rows. Edit and save a table file to update its rows in Access; the table schema cannot be changed through the file. Rows are matched to existing records by their current order; trailing rows omitted from the file are deleted and additional rows are appended. AutoNumber values are preserved for existing rows and generated for new rows, so AutoNumber fields must not be edited or reordered. Binary and complex Access field types are not supported.
+
+Code modules can also be read and written with this extension.
 
 ### Troubleshooting
 
@@ -33,7 +35,8 @@ npx electron-rebuild -f -w winax -v <electron_version>
 This extension currently is in a very early stage and only has a limited feature set.
 
 - Browse all objects available in the current `.accdb`
-- Almost complete support for code modules in `.accdb` (copy is still broken)
+- Read and write rows in supported Access tables
+- Read and write code modules in `.accdb`
 
 ## Architecture
 

@@ -3,6 +3,8 @@ import type { Category } from './AccessFileSystemProvider';
 import type { Object as WinaxObject } from 'winax';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { parseTableData, type AccessTableColumn } from './tableData';
+import { getComCollectionCount } from './comCollection';
 
 declare global {
     interface ActiveXObjectOptions {
@@ -16,6 +18,13 @@ export interface AccessInstance {
     windowTitles: string[];
     databasePath: string;
     databaseName: string;
+}
+
+interface AccessTableDocument {
+    format: 'accessfs-table-v1';
+    table: string;
+    columns: AccessTableColumn[];
+    rows: Record<string, unknown>[];
 }
 
 export class AccessBridge {
@@ -200,6 +209,8 @@ export class AccessBridge {
 
     public read(category: Category, name: string): string | undefined {
         switch (category) {
+            case 'tables':
+                return this.readTable(name);
             case 'modules':
             case 'classes':
                 return this.readCodeModule(name);
@@ -211,6 +222,8 @@ export class AccessBridge {
 
     public write(category: Category, name: string, content: string) {
         switch (category) {
+            case 'tables':
+                return this.writeTable(name, content);
             case 'modules':
             case 'classes':
                 return this.writeCodeModule(name, content);
@@ -272,6 +285,168 @@ export class AccessBridge {
     private readCodeModule(name: string): string | undefined {
         const { lineCount, codeModule } = this.getCodeModule(name);
         return lineCount > 0 ? codeModule.Lines(1, lineCount) : '';
+    }
+
+    private getTableColumns(tableName: string): AccessTableColumn[] {
+        const fields = this.access.CurrentDb().TableDefs.Item(tableName).Fields;
+        const supportedTypes = new Set([1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 18, 19, 20, 21, 22, 23]);
+        const columns: AccessTableColumn[] = [];
+        const fieldCount = getComCollectionCount(fields, `fields for table "${tableName}"`);
+
+        for (let index = 0; index < fieldCount; index++) {
+            const field = fields.Item(index);
+            const column = {
+                name: field.Name as string,
+                type: field.Type as number,
+                attributes: field.Attributes as number,
+            };
+            if (!supportedTypes.has(column.type)) {
+                throw vscode.FileSystemError.Unavailable(
+                    `Table "${tableName}" contains unsupported field "${column.name}" (DAO type ${column.type}).`,
+                );
+            }
+            columns.push(column);
+        }
+        return columns;
+    }
+
+    private readTable(tableName: string): string {
+        const columns = this.getTableColumns(tableName);
+        const escapedTableName = tableName.replace(/]/g, ']]');
+        const database = this.access.CurrentDb();
+        const recordset = database.OpenRecordset(`SELECT * FROM [${escapedTableName}]`, 2);
+        const rows: Record<string, unknown>[] = [];
+
+        try {
+            while (!recordset.EOF) {
+                const row: Record<string, unknown> = {};
+                for (let index = 0; index < columns.length; index++) {
+                    const column = columns[index];
+                    const value = recordset.Fields.Item(index).Value;
+                    row[column.name] = this.serializeTableValue(value, tableName, column.name);
+                }
+                rows.push(row);
+                recordset.MoveNext();
+            }
+        } finally {
+            recordset.Close();
+        }
+
+        const document: AccessTableDocument = {
+            format: 'accessfs-table-v1',
+            table: tableName,
+            columns,
+            rows,
+        };
+        return `${JSON.stringify(document, null, 2)}\n`;
+    }
+
+    private writeTable(tableName: string, content: string): void {
+        const columns = this.getTableColumns(tableName);
+        let rows: unknown[][];
+        try {
+            rows = parseTableData(content, tableName, columns);
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw vscode.FileSystemError.Unavailable(detail);
+        }
+
+        const escapedTableName = tableName.replace(/]/g, ']]');
+        const database = this.access.CurrentDb();
+        const recordset = database.OpenRecordset(`SELECT * FROM [${escapedTableName}]`, 2);
+        const workspace = this.access.DBEngine.Workspaces.Item(0);
+        let transactionStarted = false;
+
+        try {
+            workspace.BeginTrans();
+            transactionStarted = true;
+
+            let existingRows = 0;
+            if (!recordset.EOF) {
+                recordset.MoveLast();
+                existingRows = recordset.RecordCount;
+                recordset.MoveFirst();
+            }
+
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                const isExistingRow = rowIndex < existingRows;
+                if (isExistingRow) {
+                    recordset.Edit();
+                } else {
+                    recordset.AddNew();
+                }
+
+                for (let columnIndex = 0; columnIndex < columns.length; columnIndex++) {
+                    const column = columns[columnIndex];
+                    const value = rows[rowIndex][columnIndex];
+                    const isAutoNumber = (column.attributes & 16) !== 0;
+
+                    if (isAutoNumber) {
+                        if (isExistingRow) {
+                            const existingValue = this.serializeTableValue(
+                                recordset.Fields.Item(columnIndex).Value,
+                                tableName,
+                                column.name,
+                            );
+                            if (JSON.stringify(value) !== JSON.stringify(existingValue)) {
+                                throw vscode.FileSystemError.Unavailable(
+                                    `AutoNumber field "${column.name}" in table "${tableName}" cannot be changed or reordered.`,
+                                );
+                            }
+                        } else if (value !== null) {
+                            throw vscode.FileSystemError.Unavailable(
+                                `New rows must have a null value for AutoNumber field "${column.name}".`,
+                            );
+                        }
+                        continue;
+                    }
+
+                    recordset.Fields.Item(columnIndex).Value = value;
+                }
+                recordset.Update();
+
+                if (isExistingRow) {
+                    recordset.MoveNext();
+                }
+            }
+
+            while (!recordset.EOF) {
+                recordset.Delete();
+                recordset.MoveNext();
+            }
+
+            workspace.CommitTrans();
+            transactionStarted = false;
+        } catch (error) {
+            if (transactionStarted) {
+                try {
+                    workspace.Rollback();
+                } catch (rollbackError) {
+                    throw new AggregateError(
+                        [error, rollbackError],
+                        `Could not save table "${tableName}" or roll back its changes.`,
+                    );
+                }
+            }
+            throw error;
+        } finally {
+            recordset.Close();
+        }
+    }
+
+    private serializeTableValue(value: unknown, tableName: string, columnName: string): unknown {
+        if (value === null || value === undefined || typeof value === 'string' || typeof value === 'boolean') {
+            return value ?? null;
+        }
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+            return { $accessfs: 'date', value: value.toISOString() };
+        }
+        throw vscode.FileSystemError.Unavailable(
+            `Field "${columnName}" in table "${tableName}" contains a value that cannot be represented in JSON.`,
+        );
     }
 
     private writeCodeModule(name: string, content: string) {

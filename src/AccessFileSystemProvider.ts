@@ -155,6 +155,14 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
         const accessObjectName = name.slice(0, -extension.length);
 
         switch (category) {
+            case 'tables':
+                this.bridge.write(category, accessObjectName, new TextDecoder('utf-8').decode(content));
+                this.fileMtimes.set(
+                    this.fileKey(uri),
+                    Math.max(Date.now(), (this.fileMtimes.get(this.fileKey(uri)) ?? this.timestamp) + 1),
+                );
+                this.changedEmitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+                return;
             case 'modules':
             case 'classes':
                 const code = new TextDecoder('utf-8').decode(content);
@@ -284,7 +292,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
     private getExtension(category: Category): string {
         switch (category) {
             case 'tables':
-                return 'sql';
+                return 'json';
             case 'queries':
                 return 'sql';
             case 'forms':
@@ -325,6 +333,12 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
         const name = fileName.slice(0, -extension.length);
 
         switch (category) {
+            case 'tables':
+                const tableContent = this.bridge.read(category, name);
+                if (tableContent === undefined) {
+                    throw vscode.FileSystemError.FileNotFound(fileName);
+                }
+                return Buffer.from(tableContent, 'utf8');
             case 'modules':
             case 'classes':
                 const content = this.bridge.read(category, name);
