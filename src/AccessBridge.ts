@@ -201,6 +201,7 @@ export class AccessBridge {
     public read(category: Category, name: string): string | undefined {
         switch (category) {
             case 'modules':
+            case 'classes':
                 return this.readCodeModule(name);
         }
         throw vscode.FileSystemError.Unavailable(
@@ -211,6 +212,7 @@ export class AccessBridge {
     public write(category: Category, name: string, content: string) {
         switch (category) {
             case 'modules':
+            case 'classes':
                 return this.writeCodeModule(name, content);
         }
         throw vscode.FileSystemError.Unavailable(

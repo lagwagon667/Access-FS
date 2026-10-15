@@ -156,6 +156,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
         switch (category) {
             case 'modules':
+            case 'classes':
                 const code = new TextDecoder('utf-8').decode(content);
                 this.bridge.write(category, accessObjectName, code);
 
@@ -325,6 +326,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
 
         switch (category) {
             case 'modules':
+            case 'classes':
                 const content = this.bridge.read(category, name);
                 if (!content) {
                     throw vscode.FileSystemError.FileNotFound(fileName);
