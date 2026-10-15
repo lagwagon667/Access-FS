@@ -10,6 +10,7 @@ import {
 	renameTableSql,
 	sameTableIndexes,
 	sameTableSchema,
+	validateTableSql,
 } from '../tableData';
 import { getComCollectionCount } from '../comCollection';
 import {
@@ -112,6 +113,48 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(parsed.tableName, 'People');
 		assert.deepStrictEqual(parsed.rows, [[1, "Ada's data", created]]);
 		assert.ok(sameTableSchema(columns, parsed.columns));
+	});
+
+	test('diagnoses table SQL without a leading CREATE TABLE statement', () => {
+		const issues = validateTableSql('SELECT * FROM [People];', 'People');
+
+		assert.strictEqual(issues.length, 1);
+		assert.match(issues[0].message, /must start with a CREATE TABLE/i);
+		assert.strictEqual(issues[0].start, 0);
+	});
+
+	test('diagnoses a CREATE TABLE name that does not match the filename', () => {
+		const sql = 'CREATE TABLE [OtherPeople] ([Id] LONG);';
+		const issues = validateTableSql(sql, 'People');
+
+		assert.strictEqual(issues.length, 1);
+		assert.match(issues[0].message, /must match the file name "People"/);
+		assert.strictEqual(sql.slice(issues[0].start, issues[0].end), sql.slice(0, -1));
+	});
+
+	test('underlines an INSERT that omits a required CREATE TABLE column', () => {
+		const sql = [
+			'CREATE TABLE [People] ([Id] LONG NOT NULL, [Name] TEXT(30) NOT NULL);',
+			'INSERT INTO [People] ([Id]) VALUES (1);',
+		].join('\n');
+		const issues = validateTableSql(sql, 'People');
+
+		assert.strictEqual(issues.length, 1);
+		assert.match(issues[0].message, /missing required field "Name"/);
+		assert.strictEqual(sql.slice(issues[0].start, issues[0].end), 'INSERT INTO [People] ([Id]) VALUES (1)');
+	});
+
+	test('warns when an INSERT omits a nullable column from CREATE TABLE', () => {
+		const sql = [
+			'CREATE TABLE [People] ([Id] LONG NOT NULL, [Nickname] TEXT(30));',
+			'INSERT INTO [People] ([Id]) VALUES (1);',
+		].join('\n');
+		const issues = validateTableSql(sql, 'People');
+
+		assert.strictEqual(issues.length, 1);
+		assert.strictEqual(issues[0].severity, 'warning');
+		assert.match(issues[0].message, /Missing: Nickname/);
+		assert.strictEqual(sql.slice(issues[0].start, issues[0].end), 'INSERT INTO [People] ([Id]) VALUES (1)');
 	});
 
 	test('formats and parses primary, unique, and regular indexes', () => {

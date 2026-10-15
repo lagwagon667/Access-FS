@@ -3,6 +3,7 @@
 import * as vscode from 'vscode';
 import { AccessFileSystemProvider } from './AccessFileSystemProvider';
 import { AccessBridge } from './AccessBridge';
+import { validateTableSql } from './tableData';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -18,10 +19,42 @@ export function activate(context: vscode.ExtensionContext) {
 		{ isCaseSensitive: false, isReadonly: false },
 	);
 	const decorationProvider = vscode.window.registerFileDecorationProvider(provider);
+	const tableSqlDiagnostics = vscode.languages.createDiagnosticCollection('accessfs-table-sql');
 	context.subscriptions.push(decorationProvider, new vscode.Disposable(() => {
 		fsProvider.dispose();
 		provider.dispose();
-	}));
+	}), tableSqlDiagnostics);
+
+	const updateTableSqlDiagnostics = (document: vscode.TextDocument) => {
+		if (!isTableSqlDocument(document.uri)) {
+			return;
+		}
+		const fileName = document.uri.path.split('/').pop() ?? '';
+		const tableName = fileName.replace(/\.sql$/i, '');
+		const diagnostics = validateTableSql(document.getText(), tableName).map(issue => {
+			const diagnostic = new vscode.Diagnostic(
+				new vscode.Range(document.positionAt(issue.start), document.positionAt(issue.end)),
+				issue.message,
+				issue.severity === 'error'
+					? vscode.DiagnosticSeverity.Error
+					: vscode.DiagnosticSeverity.Warning,
+			);
+			diagnostic.source = 'Access-FS table SQL';
+			return diagnostic;
+		});
+		tableSqlDiagnostics.set(document.uri, diagnostics);
+	};
+	const documentOpenListener = vscode.workspace.onDidOpenTextDocument(updateTableSqlDiagnostics);
+	const documentChangeListener = vscode.workspace.onDidChangeTextDocument(event => {
+		updateTableSqlDiagnostics(event.document);
+	});
+	const documentCloseListener = vscode.workspace.onDidCloseTextDocument(document => {
+		tableSqlDiagnostics.delete(document.uri);
+	});
+	context.subscriptions.push(documentOpenListener, documentChangeListener, documentCloseListener);
+	for (const document of vscode.workspace.textDocuments) {
+		updateTableSqlDiagnostics(document);
+	}
 	const command = vscode.commands.registerCommand('accessfs.addToWorkspace', async () => {
 		const root = vscode.Uri.parse('accessfs:/');
 		const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
@@ -124,6 +157,14 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 	context.subscriptions.push(searchCommand);
+}
+
+function isTableSqlDocument(uri: vscode.Uri): boolean {
+	if (!uri.path.toLowerCase().endsWith('.sql')) {
+		return false;
+	}
+	const pathParts = uri.path.split('/').filter(Boolean);
+	return pathParts.length > 1 && pathParts[pathParts.length - 2].toLowerCase() === 'tables';
 }
 
 // This method is called when your extension is deactivated

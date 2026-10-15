@@ -14,11 +14,15 @@ Use `AccessFS: Search Access Objects` from the Command Palette to search object 
 
 Table files use `.sql` scripts containing a `CREATE TABLE` statement, optional `CREATE INDEX` / `CREATE UNIQUE INDEX` statements, and `INSERT` statements for their rows. Index statements support primary keys using `WITH PRIMARY`, composite keys, and ascending or descending index fields. To create a table, create a `.sql` file under `tables` and save a script whose table name matches the filename (without `.sql`). Copying a table file to a new filename creates a new table with that name; the Access Navigation Pane is refreshed after creation. Renaming an existing table file renames the Access table and its generated `CREATE TABLE` statement. Deleting a table `.sql` file deletes the Access table; an open table is closed without saving first. Saving a different schema or index definition rebuilds the table from the script: existing table data is discarded and replaced by the listed rows, and AutoNumber values may change. The extension closes the table in Access before dropping it. Relationships and other table metadata not represented in the script are not preserved; Access may reject a rebuild when relationships prevent dropping the table.
 
+Table SQL files under a `tables` folder are validated as you edit them. Errors such as a missing leading `CREATE TABLE`, a table name that differs from the filename, or `INSERT` statements that omit required fields appear as editor diagnostics. Inserts that omit nullable columns also receive a warning listing the fields not explicitly specified.
+
 When the schema and indexes are unchanged, rows are matched to existing records by their current order; trailing rows omitted from the file are deleted and additional rows are appended. AutoNumber values for existing rows must not be changed or reordered. For new rows, numeric AutoNumber values in `INSERT` statements are ignored; Access generates the actual ID, and the open SQL document is refreshed with the generated value after saving. Binary and complex Access field types, inline table constraints, and relationships are not represented by the SQL format.
 
 Code modules can also be read and written with this extension.
 
 Hidden and system Access objects are shown with a dimmed name in the VS Code Explorer.
+
+To use the custom table icon, open the Command Palette, choose `Preferences: File Icon Theme`, and select `Access-FS Table Icons`. VS Code file icon themes match by extension rather than folder path, so the `.sql` icon is used for SQL files throughout VS Code. This theme uses simple generic icons for other files and folders; select your previous icon theme to restore the previous icons.
 
 ### Troubleshooting
 

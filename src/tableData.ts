@@ -23,6 +23,13 @@ export interface ParsedTableSql {
     rows: unknown[][];
 }
 
+export interface TableSqlIssue {
+    message: string;
+    start: number;
+    end: number;
+    severity: 'error' | 'warning';
+}
+
 interface AccessDateValue {
     $accessfs: 'date';
     value: string;
@@ -65,7 +72,7 @@ export function parseTableSql(
             indexes.push(parseIndexStatement(statement, tableName, columns));
             continue;
         }
-        rows.push(parseInsertStatement(statement, statementIndex + 1, tableName, columns));
+        rows.push(parseInsertStatement(statement, statementIndex, tableName, columns));
     }
     const normalizedIndexNames = indexes.map(index => index.name.toLowerCase());
     if (new Set(normalizedIndexNames).size !== normalizedIndexNames.length) {
@@ -78,6 +85,89 @@ export function parseTableSql(
         .filter(statement => /^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(statement))
         .map(statement => statement.trim());
     return { tableName, createStatement, columns, indexes, indexStatements, rows };
+}
+
+export function validateTableSql(content: string, expectedTableName: string): TableSqlIssue[] {
+    let statements: StatementRange[];
+    try {
+        statements = splitStatementsWithOffsets(content);
+    } catch (error) {
+        return [{
+            message: error instanceof Error ? error.message : String(error),
+            start: 0,
+            end: content.length,
+            severity: 'error',
+        }];
+    }
+
+    if (!statements.length || !/^CREATE\s+TABLE\b/i.test(statements[0].text)) {
+        const firstStatement = statements[0];
+        return [{
+            message: 'Table SQL must start with a CREATE TABLE statement.',
+            start: firstStatement?.start ?? 0,
+            end: firstStatement?.end ?? content.length,
+            severity: 'error',
+        }];
+    }
+
+    try {
+        const parsed = parseTableSql(content);
+        if (parsed.tableName.toLowerCase() !== expectedTableName.toLowerCase()) {
+            return [{
+                message: `CREATE TABLE name "${parsed.tableName}" must match the file name "${expectedTableName}".`,
+                start: statements[0].start,
+                end: statements[0].end,
+                severity: 'error',
+            }];
+        }
+        const issues: TableSqlIssue[] = [];
+        for (const statement of statements.slice(1)) {
+            if (!/^INSERT\s+INTO\b/i.test(statement.text)) {
+                continue;
+            }
+            const insertPrefix = /^INSERT\s+INTO\s+/i.exec(statement.text);
+            if (!insertPrefix) {
+                continue;
+            }
+            const tableIdentifier = readBracketedIdentifier(statement.text, insertPrefix[0].length);
+            const insert = /^\s*\(([\s\S]*?)\)\s*VALUES\b/i.exec(statement.text.slice(tableIdentifier.end));
+            if (!insert) {
+                continue;
+            }
+            const specifiedColumns = new Set(
+                splitCommaSeparated(insert[1]).map(column => parseIdentifier(column.trim()).toLowerCase()),
+            );
+            const missingColumns = parsed.columns
+                .filter(column => !specifiedColumns.has(column.name.toLowerCase()))
+                .map(column => column.name);
+            if (missingColumns.length) {
+                issues.push({
+                    message: `INSERT does not specify all CREATE TABLE columns. Missing: ${missingColumns.join(', ')}.`,
+                    start: statement.start,
+                    end: statement.end,
+                    severity: 'warning',
+                });
+            }
+        }
+        return issues;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const statementNumber = /(?:Statement|statement)\s+(\d+)/.exec(message);
+        let problemStatement: StatementRange | undefined;
+        if (statementNumber) {
+            problemStatement = statements[Number(statementNumber[1]) - 1];
+        } else if (/index/i.test(message)) {
+            problemStatement = statements.find(statement => /^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(statement.text));
+        } else {
+            problemStatement = statements[0];
+        }
+        return [{
+            message,
+            start: problemStatement?.start ?? 0,
+            end: problemStatement?.end ?? content.length,
+            severity: 'error',
+        }];
+    }
 }
 
 export function renameTableSql(content: string, newTableName: string): string {
@@ -471,8 +561,18 @@ function parseSqlValue(value: string, tableName: string, columnName: string): un
     throw new Error(`Value for field "${columnName}" in table "${tableName}" is not a supported SQL literal.`);
 }
 
+interface StatementRange {
+    text: string;
+    start: number;
+    end: number;
+}
+
 function splitStatements(sql: string): string[] {
-    const statements: string[] = [];
+    return splitStatementsWithOffsets(sql).map(statement => statement.text);
+}
+
+function splitStatementsWithOffsets(sql: string): StatementRange[] {
+    const statements: StatementRange[] = [];
     let start = 0;
     let inString = false;
     let inDate = false;
@@ -495,9 +595,15 @@ function splitStatements(sql: string): string[] {
         } else if (character === ']' && inIdentifier) {
             inIdentifier = false;
         } else if (character === ';' && !inString && !inDate && !inIdentifier) {
-            const statement = sql.slice(start, index).trim();
+            const segment = sql.slice(start, index);
+            const statement = segment.trim();
             if (statement) {
-                statements.push(statement);
+                const leadingWhitespace = segment.length - segment.trimStart().length;
+                statements.push({
+                    text: statement,
+                    start: start + leadingWhitespace,
+                    end: start + leadingWhitespace + statement.length,
+                });
             }
             start = index + 1;
         }
@@ -506,9 +612,15 @@ function splitStatements(sql: string): string[] {
     if (inString || inDate || inIdentifier) {
         throw new Error('Table SQL contains an unterminated string, date, or identifier.');
     }
-    const trailingStatement = sql.slice(start).trim();
+    const trailingSegment = sql.slice(start);
+    const trailingStatement = trailingSegment.trim();
     if (trailingStatement) {
-        statements.push(trailingStatement);
+        const leadingWhitespace = trailingSegment.length - trailingSegment.trimStart().length;
+        statements.push({
+            text: trailingStatement,
+            start: start + leadingWhitespace,
+            end: start + leadingWhitespace + trailingStatement.length,
+        });
     }
     return statements;
 }

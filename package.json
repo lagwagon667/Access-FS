@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onFileSystem:accessfs"
+    "onFileSystem:accessfs",
+    "onLanguage:sql"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -22,6 +23,13 @@
       {
         "command": "accessfs.searchObjects",
         "title": "AccessFS: Search Access Objects"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "accessfs-table-icons",
+        "label": "Access-FS Table Icons",
+        "path": "./icons/accessfs-file-icon-theme.json"
       }
     ]
   },

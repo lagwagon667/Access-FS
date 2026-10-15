@@ -1,0 +1,33 @@
+{
+  "iconDefinitions": {
+    "_file": {
+      "iconPath": "./file.svg"
+    },
+    "_folder": {
+      "iconPath": "./folder.svg"
+    },
+    "_table": {
+      "iconPath": "./table.svg"
+    },
+    "_fileLight": {
+      "iconPath": "./file-light.svg"
+    },
+    "_folderLight": {
+      "iconPath": "./folder-light.svg"
+    }
+  },
+  "file": "_file",
+  "folder": "_folder",
+  "folderExpanded": "_folder",
+  "fileExtensions": {
+    "sql": "_table"
+  },
+  "light": {
+    "file": "_fileLight",
+    "folder": "_folderLight",
+    "folderExpanded": "_folderLight",
+    "fileExtensions": {
+      "sql": "_table"
+    }
+  }
+}
