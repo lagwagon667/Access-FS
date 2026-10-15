@@ -26,6 +26,7 @@ export class AccessBridge {
         queries: () => this.access.CurrentData.AllQueries,
         forms: () => this.access.CurrentProject.AllForms,
         reports: () => this.access.CurrentProject.AllReports,
+        classes: () => this.access.CurrentProject.AllModules,
         modules: () => this.access.CurrentProject.AllModules,
         macros: () => this.access.CurrentProject.AllMacros,
     } as const;
@@ -221,7 +222,19 @@ export class AccessBridge {
         const collection = this.categories[category]();
         const names: string[] = [];
         for (let i = 0; i < collection.Count; i++) {
-            names.push(collection.Item(i).Name);
+            const name = collection.Item(i).Name;
+            switch (category) {
+                case 'modules':
+                case 'classes':
+                    const { codeModule } = this.getCodeModule(name);
+                    if ((codeModule.Parent.Type === this.codeTypes.vbext_ct_StdModule && category === 'modules') ||
+                        (codeModule.Parent.Type === this.codeTypes.vbext_ct_ClassModule && category === 'classes')) {
+                        names.push(name);
+                    }
+                    break;
+                default:
+                    names.push(name);
+            }
         }
         return names;
     }

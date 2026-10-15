@@ -7,6 +7,7 @@ const categories = {
     forms: '$access.CurrentProject.AllForms',
     reports: '$access.CurrentProject.AllReports',
     modules: '$access.CurrentProject.AllModules',
+    classes: '$access.CurrentProject.AllModules',
     macros: '$access.CurrentProject.AllMacros',
 } as const;
 
@@ -290,7 +291,9 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             case 'reports':
                 return 'rpt';
             case 'modules':
-                return 'vb';
+                return 'bas';
+            case 'classes':
+                return 'cls';
             case 'macros':
                 return 'macro';
             default:
