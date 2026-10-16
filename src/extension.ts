@@ -49,7 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
 				'Access-FS VBA Language Server',
 				{ module: serverModule, transport: TransportKind.ipc },
 				{
-					documentSelector: [{ scheme: 'accessfs', pattern: '**/*.{bas,cls}' }],
+					documentSelector: [{ scheme: 'accessfs', pattern: '**/*.{bas,cls,frm}' }],
 				},
 			);
 			vbaLanguageClient = client;
@@ -225,7 +225,7 @@ function isTableSqlDocument(uri: vscode.Uri): boolean {
 
 function isAccessVbaDocument(document: vscode.TextDocument): boolean {
 	return document.uri.scheme === 'accessfs'
-		&& (document.languageId === 'vba' || /\.(bas|cls)$/i.test(document.uri.path));
+		&& (document.languageId === 'vba' || /\.(cls|bas|frm)$/i.test(document.uri.path));
 }
 
 // This method is called when your extension is deactivated

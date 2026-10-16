@@ -263,6 +263,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
                 return;
             case 'modules':
             case 'classes':
+            case 'forms':
                 const code = new TextDecoder('utf-8').decode(content);
                 this.bridge.write(category, accessObjectName, code);
 
@@ -428,7 +429,7 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
             case 'queries':
                 return 'sql';
             case 'forms':
-                return 'form';
+                return 'frm';
             case 'reports':
                 return 'rpt';
             case 'modules':
@@ -473,8 +474,9 @@ export class AccessFileSystemProvider implements vscode.FileSystemProvider, vsco
                 return Buffer.from(tableContent, 'utf8');
             case 'modules':
             case 'classes':
+            case 'forms':
                 const content = this.bridge.read(category, name);
-                if (!content) {
+                if (content === undefined) {
                     throw vscode.FileSystemError.FileNotFound(fileName);
                 }
                 return Buffer.from(this.normalizeLineEndings(content), 'utf8');

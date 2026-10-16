@@ -18,6 +18,7 @@ import {
     isDaoHiddenOrSystem,
     isMsysHiddenOrSystem,
 } from './accessObjectFlags';
+import { forEach } from 'vscode-languageclient/$test/common/utils/async';
 
 declare global {
     interface ActiveXObjectOptions {
@@ -68,6 +69,7 @@ export class AccessBridge {
         acTable: 0,
         acTableDataMacro: 12,
     };
+    private readonly acSaveYes = 1;
     private readonly acSaveNo = 2;
 
     constructor() {
@@ -221,6 +223,8 @@ export class AccessBridge {
             case 'modules':
             case 'classes':
                 return this.readCodeModule(name);
+            case 'forms':
+                return this.readFormModule(name);
         }
         throw vscode.FileSystemError.Unavailable(
             `Access Object category ${category} not supported yet`,
@@ -234,6 +238,8 @@ export class AccessBridge {
             case 'modules':
             case 'classes':
                 return this.writeCodeModule(name, content);
+            case 'forms':
+                return this.writeFormModule(name, content);
         }
         throw vscode.FileSystemError.Unavailable(
             `Access Object category ${category} not supported yet`,
@@ -318,6 +324,11 @@ export class AccessBridge {
         );
     }
 
+    private readCodeModule(name: string): string | undefined {
+        const { lineCount, codeModule } = this.getCodeModule(name);
+        return lineCount > 0 ? codeModule.Lines(1, lineCount) : '';
+    }
+
     private getCodeModule(name: string) {
         const vbProject = this.access.VBE.ActiveVBProject;
         const vbComponent = vbProject.VBComponents.Item(name);
@@ -326,9 +337,73 @@ export class AccessBridge {
         return { lineCount, codeModule };
     }
 
-    private readCodeModule(name: string): string | undefined {
-        const { lineCount, codeModule } = this.getCodeModule(name);
-        return lineCount > 0 ? codeModule.Lines(1, lineCount) : '';
+    private writeFormModule(name: string, content: string): void {
+        const form = this.access.CurrentProject.AllForms.Item(name);
+        if (typeof form.IsLoaded !== 'boolean') {
+            throw vscode.FileSystemError.Unavailable(
+                `Could not determine whether Access form "${name}" is open.`,
+            );
+        }
+        if (form.IsLoaded) {
+            this.access.DoCmd.Close(
+                this.acObjectType.acForm,
+                name,
+                this.acSaveYes,
+            );
+        }
+
+        this.access.DoCmd.OpenForm(name, 1);
+        try {
+            const openForm = this.access.Forms.Item(name);
+            if (typeof openForm.HasModule !== 'boolean') {
+                throw vscode.FileSystemError.Unavailable(
+                    `Could not determine whether Access form "${name}" has a code module.`,
+                );
+            }
+            if (!openForm.HasModule) {
+                openForm.HasModule = true;
+                this.access.DoCmd.Save(this.acObjectType.acForm, name);
+            }
+
+            const { lineCount, formModule } = this.getFormModule(name);
+            if (!formModule) {
+                throw vscode.FileSystemError.Unavailable(
+                    `Access did not create a code module for form "${name}".`,
+                );
+            }
+            if (lineCount > 0) {
+                formModule.DeleteLines(1, lineCount);
+            }
+            if (content.length > 0) {
+                formModule.AddFromString(content);
+            }
+            this.access.DoCmd.Save(this.acObjectType.acForm, name);
+        } finally {
+            this.access.DoCmd.Close(
+                this.acObjectType.acForm,
+                name,
+                this.acSaveYes,
+            );
+        }
+    }
+
+    private readFormModule(name: string): string | undefined {
+        const { lineCount, formModule } = this.getFormModule(name);
+        return lineCount > 0 ? formModule.Lines(1, lineCount) : '';
+    }
+
+    private getFormModule(name: string) {
+        const vbProject = this.access.VBE.ActiveVBProject;
+        for (let i = 1; i <= vbProject.VBComponents.Count; i++) {
+            const vbComponent = vbProject.VBComponents.Item(i);
+            if (vbComponent.Name.toLowerCase() === `Form_${name}`.toLowerCase()) {
+                const formModule = vbComponent.CodeModule;
+                const lineCount = formModule.CountOfLines;
+                return { lineCount, formModule };
+            }
+        }
+
+        return { lineCount: 0, formModule: undefined };
     }
 
     private getTableColumns(tableName: string): AccessTableColumn[] {
