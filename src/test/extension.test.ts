@@ -124,6 +124,16 @@ suite('Extension Test Suite', () => {
 			assert.ok(definitions?.length, `the constant reference should have a definition; diagnostics: ${JSON.stringify(diagnostics)}`);
 			assert.strictEqual(definitions[0].targetUri, uri);
 			assert.strictEqual(definitions[0].targetSelectionRange.start.line, 2);
+
+			const completionResponse = await client.sendRequest('textDocument/completion', {
+				textDocument: { uri },
+				position: { line: 5, character: 14 },
+			}) as { items?: { label: string; detail?: string }[] } | { label: string; detail?: string }[] | null;
+			const completions = Array.isArray(completionResponse)
+				? completionResponse
+				: completionResponse?.items ?? [];
+			assert.ok(completions.some(item => item.label === 'X' && item.detail === 'Public Const'));
+			assert.ok(completions.some(item => item.label === 'MsgBox' && item.detail === 'VBA/Access intrinsic'));
 		} finally {
 			await client.stop();
 		}

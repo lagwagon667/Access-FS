@@ -1,6 +1,8 @@
 // Core
 import {
 	DiagnosticSeverity,
+	CompletionItem,
+	CompletionItemKind,
 	LocationLink,
 	Position,
 	Range,
@@ -607,9 +609,133 @@ export class ScopeItemCapability {
 		return this.parent?.getAccessibleScopes(identifier, results) ?? results;
 	}
 
+	getCompletionItems(uri: string, position: Position): CompletionItem[] {
+		const module = this.findModuleByUri(uri);
+		if (!module) {
+			return [];
+		}
+
+		const currentScope = module.findInnermostScopeAtPosition(position);
+		const candidates: ScopeItemCapability[] = [];
+		let scope: ScopeItemCapability | undefined = currentScope;
+		while (scope) {
+			if (scope.type === ScopeType.PROJECT) {
+				scope.implicitDeclarations?.forEach(items => candidates.push(...items));
+			} else {
+				scope.completionDeclarations().forEach(items => candidates.push(...items));
+			}
+			scope = scope.parent;
+		}
+
+		const seen = new Set<string>();
+		const items: CompletionItem[] = [];
+		for (const candidate of candidates) {
+			const name = candidate.identifier;
+			const key = name.toLocaleLowerCase();
+			if (!name || seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			items.push({
+				label: name,
+				kind: this.completionKind(candidate),
+				detail: this.completionDetail(candidate),
+				sortText: `0_${name}`,
+			});
+		}
+
+		for (const builtin of VBA_COMPLETIONS) {
+			const key = builtin.label.toLocaleLowerCase();
+			if (!seen.has(key)) {
+				seen.add(key);
+				items.push(builtin);
+			}
+		}
+
+		return items;
+	}
+
+	private findInnermostScopeAtPosition(position: Position): ScopeItemCapability {
+		const childScopes = [
+			this.types,
+			this.modules,
+			this.functions,
+			this.subroutines,
+		].flatMap(map => map ? Array.from(map.values()).flat() : []);
+		const containingScopes = childScopes
+			.filter(scope => scope.hasScopeBody
+				&& scope.element?.context.range
+				&& isPositionInsideRange(position, scope.element.context.range))
+			.sort((a, b) => this.scopeRangeSize(a) - this.scopeRangeSize(b));
+		return containingScopes[0]?.findInnermostScopeAtPosition(position) ?? this;
+	}
+
+	private completionDeclarations(): ScopeItemCapability[][] {
+		const result: ScopeItemCapability[][] = [];
+		for (const map of [this.types, this.modules, this.functions, this.subroutines, this.parameters]) {
+			if (map) {
+				result.push(...map.values());
+			}
+		}
+		for (const map of [
+			this.properties?.getters,
+			this.properties?.letters,
+			this.properties?.setters,
+		]) {
+			if (map) {
+				result.push(...map.values());
+			}
+		}
+		return result;
+	}
+
 	findType(identifier: string): ScopeItemCapability | undefined {
 		return this.types?.get(identifier)?.[0]
 			?? this.parent?.findType(identifier);
+	}
+
+	private scopeRangeSize(scope: ScopeItemCapability): number {
+		const range = scope.element?.context.range;
+		return range
+			? (range.end.line - range.start.line) * 1_000_000
+				+ range.end.character - range.start.character
+			: Number.MAX_SAFE_INTEGER;
+	}
+
+	private completionKind(scope: ScopeItemCapability): CompletionItemKind {
+		if (scope.type === ScopeType.FUNCTION) {
+			return CompletionItemKind.Function;
+		}
+		if (scope.type === ScopeType.SUBROUTINE) {
+			return CompletionItemKind.Method;
+		}
+		if (scope.type === ScopeType.PROPERTY) {
+			return CompletionItemKind.Property;
+		}
+		if (scope.type === ScopeType.MODULE) {
+			return CompletionItemKind.Module;
+		}
+		if (scope.type === ScopeType.CLASS) {
+			return CompletionItemKind.Class;
+		}
+		if (scope.type === ScopeType.TYPE) {
+			return CompletionItemKind.Struct;
+		}
+		if (scope.type === ScopeType.PARAMETER) {
+			return CompletionItemKind.Variable;
+		}
+		if (scope.element && 'isConstant' in scope.element && scope.element.isConstant) {
+			return CompletionItemKind.Constant;
+		}
+		return CompletionItemKind.Variable;
+	}
+
+	private completionDetail(scope: ScopeItemCapability): string {
+		const visibility = scope.isPublicScope ? 'Public' : 'Private';
+		if (scope.element && 'isConstant' in scope.element && scope.element.isConstant) {
+			return `${visibility} Const`;
+		}
+		return `${visibility} ${ScopeType[scope.type]}`;
 	}
 
 	findModule(identifier: string): ScopeItemCapability | undefined {
@@ -1049,3 +1175,41 @@ export class ScopeItemCapability {
 		return Array.from(m.values());
 	}
 }
+
+const VBA_COMPLETIONS: CompletionItem[] = [
+	...['And', 'As', 'ByRef', 'ByVal', 'Call', 'Case', 'Const', 'Dim', 'Do', 'Each', 'Else', 'ElseIf',
+		'End', 'Enum', 'Exit', 'For', 'Function', 'GoSub', 'GoTo', 'If', 'Implements', 'In', 'Is',
+		'Let', 'Loop', 'Me', 'Mod', 'New', 'Next', 'Not', 'Nothing', 'On', 'Option', 'Or',
+		'ParamArray', 'Preserve', 'Private', 'Property', 'Public', 'ReDim', 'Resume', 'Select',
+		'Set', 'Static', 'Step', 'Sub', 'Then', 'To', 'Type', 'Until', 'Wend', 'While', 'With',
+		'WithEvents', 'Xor'].map(label => ({
+		label,
+		kind: CompletionItemKind.Keyword,
+		detail: 'VBA keyword',
+	})),
+	...['Boolean', 'Byte', 'Currency', 'Date', 'Decimal', 'Double', 'Integer', 'Long', 'LongLong',
+		'LongPtr', 'Object', 'Single', 'String', 'Variant'].map(label => ({
+		label,
+		kind: CompletionItemKind.Keyword,
+		detail: 'VBA type',
+	})),
+	...['Abs', 'Array', 'Asc', 'Atn', 'CBool', 'CByte', 'CCur', 'CDate', 'CDbl', 'CDec', 'CInt',
+		'CLng', 'Cos', 'CreateObject', 'CSng', 'CStr', 'Date', 'DateAdd', 'DateDiff', 'DatePart',
+		'DateSerial', 'DateValue', 'Day', 'Environ', 'Err', 'Exp', 'Format', 'GetObject', 'Hour',
+		'IIf', 'InStr', 'Int', 'IsArray', 'IsDate', 'IsEmpty', 'IsError', 'IsMissing', 'IsNull',
+		'IsNumeric', 'Join', 'LBound', 'LCase', 'Left', 'Len', 'Log', 'LTrim', 'Mid', 'Minute',
+		'Month', 'MsgBox', 'Now', 'Nz', 'Replace', 'Right', 'Rnd', 'Round', 'RTrim', 'Second',
+		'Split', 'Sqr', 'Str', 'StrComp', 'String', 'Time', 'Timer', 'TimeSerial', 'TimeValue',
+		'Trim', 'TypeName', 'UBound', 'UCase', 'Val', 'Weekday', 'Year'].map(label => ({
+		label,
+		kind: CompletionItemKind.Function,
+		detail: 'VBA/Access intrinsic',
+	})),
+	...['CurrentDb', 'CurrentProject', 'CurrentUser', 'DoCmd', 'Forms', 'Reports', 'Screen',
+		'Debug', 'Empty', 'False', 'Null', 'True', 'vbCr', 'vbCrLf', 'vbLf', 'vbNewLine',
+		'vbNullString', 'vbTab'].map(label => ({
+		label,
+		kind: CompletionItemKind.Variable,
+		detail: 'Access/VBA built-in',
+	})),
+];

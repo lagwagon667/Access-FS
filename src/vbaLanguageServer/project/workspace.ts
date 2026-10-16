@@ -361,10 +361,13 @@ class WorkspaceEvents {
 
 	/** Connection event handlers */
 
-	private onCompletion(params: CompletionParams): never[] {
+	private onCompletion(params: CompletionParams): CompletionItem[] {
 		Services.logger.debug('[event] onCompletion');
 		Services.logger.debug(JSON.stringify(params), 1);
-		return [];
+		return Services.projectScope.getCompletionItems(
+			params.textDocument.uri,
+			params.position,
+		);
 	}
 
 	private onCompletionResolve(item: CompletionItem): CompletionItem {
