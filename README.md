@@ -20,6 +20,8 @@ When the schema and indexes are unchanged, rows are matched to existing records 
 
 Code modules can also be read and written with this extension.
 
+Access-FS includes an adapted copy of the MIT-licensed [VBA Language Server](https://github.com/SSlinky/VBA-LanguageServer/tree/v1.7.4) (v1.7.4) for `.bas` and `.cls` documents opened from its virtual filesystem. It parses open virtual documents directly and does not try to scan an `accessfs:` workspace as a disk folder. The separate `NotisDataAnalytics.vba-lsp` extension is incompatible with Access-FS workspaces: its language server attempts to scan `accessfs:/` as a disk path and crashes. Disable that extension for the Access-FS workspace or uninstall it. Access-FS launches its own adapted language server; the upstream extension is no longer recommended.
+
 Hidden and system Access objects are shown with a dimmed name in the VS Code Explorer.
 
 To use the custom table icon, open the Command Palette, choose `Preferences: File Icon Theme`, and select `Access-FS Table Icons`. VS Code file icon themes match by extension rather than folder path, so the `.sql` icon is used for SQL files throughout VS Code. This theme uses simple generic icons for other files and folders; select your previous icon theme to restore the previous icons.

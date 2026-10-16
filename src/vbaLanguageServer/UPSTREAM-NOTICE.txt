@@ -1,0 +1,11 @@
+The VBA language server source in this directory is adapted from:
+https://github.com/SSlinky/VBA-LanguageServer/tree/v1.7.4
+
+Copyright (c) Sam Vanderslink
+
+The upstream project is licensed under the MIT License. Its full license text
+is included in UPSTREAM-LICENCE.
+
+The Access-FS adaptations include URI-preserving file/path conversion,
+skipping disk indexing for non-file workspace folders, and parsing opened
+virtual documents from their language-server document contents.

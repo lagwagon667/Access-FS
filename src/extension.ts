@@ -1,6 +1,8 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as path from 'path';
+import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
 import { AccessFileSystemProvider } from './AccessFileSystemProvider';
 import { AccessBridge } from './AccessBridge';
 import { validateTableSql } from './tableData';
@@ -12,6 +14,11 @@ export function activate(context: vscode.ExtensionContext) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Congratulations, your extension "accessfs" is now active!');
+	if (vscode.extensions.getExtension('NotisDataAnalytics.vba-lsp')) {
+		void vscode.window.showWarningMessage(
+			'NotisDataAnalytics.vba-lsp is incompatible with Access-FS virtual VBA files and can crash while scanning the accessfs: workspace. Disable it for this workspace or uninstall it; Access-FS includes its own VBA language server.',
+		);
+	}
 	const provider = new AccessFileSystemProvider();
 	const fsProvider = vscode.workspace.registerFileSystemProvider(
 		'accessfs',
@@ -20,10 +27,59 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	const decorationProvider = vscode.window.registerFileDecorationProvider(provider);
 	const tableSqlDiagnostics = vscode.languages.createDiagnosticCollection('accessfs-table-sql');
+	let vbaLanguageClient: LanguageClient | undefined;
+	let startingVbaLanguageClient: Promise<void> | undefined;
 	context.subscriptions.push(decorationProvider, new vscode.Disposable(() => {
 		fsProvider.dispose();
 		provider.dispose();
 	}), tableSqlDiagnostics);
+
+	const startVbaLanguageClient = (): Promise<void> => {
+		if (vbaLanguageClient) {
+			return Promise.resolve();
+		}
+		if (startingVbaLanguageClient) {
+			return startingVbaLanguageClient;
+		}
+
+		startingVbaLanguageClient = (async () => {
+			const serverModule = context.asAbsolutePath(path.join('out', 'vbaLanguageServer', 'server.js'));
+			const client = new LanguageClient(
+				'accessfs-vba',
+				'Access-FS VBA Language Server',
+				{ module: serverModule, transport: TransportKind.ipc },
+				{
+					documentSelector: [{ scheme: 'accessfs', pattern: '**/*.{bas,cls}' }],
+				},
+			);
+			vbaLanguageClient = client;
+			context.subscriptions.push(client);
+			try {
+				await client.start();
+			} catch (error) {
+				client.dispose();
+				vbaLanguageClient = undefined;
+				throw error;
+			}
+		})().finally(() => {
+			startingVbaLanguageClient = undefined;
+		});
+		return startingVbaLanguageClient;
+	};
+	const startVbaLanguageClientForDocument = (document: vscode.TextDocument) => {
+		if (isAccessVbaDocument(document)) {
+			void startVbaLanguageClient().catch(error => {
+				const message = error instanceof Error ? error.message : String(error);
+				console.error('Could not start the VBA language server for Access-FS documents:', error);
+				void vscode.window.showErrorMessage(`Could not start the Access-FS VBA language server: ${message}`);
+			});
+		}
+	};
+	const vbaDocumentOpenListener = vscode.workspace.onDidOpenTextDocument(startVbaLanguageClientForDocument);
+	context.subscriptions.push(vbaDocumentOpenListener);
+	for (const document of vscode.workspace.textDocuments) {
+		startVbaLanguageClientForDocument(document);
+	}
 
 	const updateTableSqlDiagnostics = (document: vscode.TextDocument) => {
 		if (!isTableSqlDocument(document.uri)) {
@@ -165,6 +221,11 @@ function isTableSqlDocument(uri: vscode.Uri): boolean {
 	}
 	const pathParts = uri.path.split('/').filter(Boolean);
 	return pathParts.length > 1 && pathParts[pathParts.length - 2].toLowerCase() === 'tables';
+}
+
+function isAccessVbaDocument(document: vscode.TextDocument): boolean {
+	return document.uri.scheme === 'accessfs'
+		&& (document.languageId === 'vba' || /\.(bas|cls)$/i.test(document.uri.path));
 }
 
 // This method is called when your extension is deactivated

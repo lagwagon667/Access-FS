@@ -10,8 +10,11 @@
     "Other"
   ],
   "activationEvents": [
+    "onCommand:accessfs.addToWorkspace",
+    "onCommand:accessfs.searchObjects",
     "onFileSystem:accessfs",
-    "onLanguage:sql"
+    "onLanguage:sql",
+    "onLanguage:vba"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -35,10 +38,12 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && npm run compile:vba-server",
+    "compile:vba-server": "npm run generate:vba-parser && tsc -p src/vbaLanguageServer/tsconfig.json && esbuild src/vbaLanguageServer/server.ts --bundle --platform=node --format=cjs --target=node18 --outfile=out/vbaLanguageServer/server.js",
+    "generate:vba-parser": "antlr-ng --define language=TypeScript --generate-visitor true -o ./src/vbaLanguageServer/antlr/out/ ./src/vbaLanguageServer/antlr/vba.g4 && antlr-ng --define language=TypeScript --generate-visitor true -o ./src/vbaLanguageServer/antlr/out/ ./src/vbaLanguageServer/antlr/vbapre.g4 && antlr-ng --define language=TypeScript --generate-visitor true -o ./src/vbaLanguageServer/antlr/out/ ./src/vbaLanguageServer/antlr/vbafmt.g4",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
+    "lint": "eslint src --ignore-pattern \"src/vbaLanguageServer/**\"",
     "test": "vscode-test"
   },
   "devDependencies": {
@@ -48,6 +53,8 @@
     "@types/vscode": "^1.140.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
+    "antlr-ng": "^1.0.10",
+    "esbuild": "^0.25.4",
     "eslint": "^10.5.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1"
@@ -57,6 +64,12 @@
     "serialize-javascript": "^7.0.6"
   },
   "dependencies": {
+    "antlr4ng": "^3.0.16",
+    "reflect-metadata": "^0.2.2",
+    "tsyringe": "^4.10.0",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "vscode-languageclient": "^10.1.2",
     "winax": "^3.6.9"
   }
 }

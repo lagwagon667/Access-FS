@@ -4,3 +4,4 @@ node_modules
 .vscode-test/
 *.vsix
 .github
+src/vbaLanguageServer/antlr/out/

@@ -1,8 +1,11 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // You can import and use all API from the 'vscode' module
 // as well as import your extension to test it
 import * as vscode from 'vscode';
+import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
 import { AccessFileSystemProvider } from '../AccessFileSystemProvider';
 import {
 	formatTableSql,
@@ -28,6 +31,18 @@ suite('Extension Test Suite', () => {
 			candidate => candidate.packageJSON.name === 'accessfs',
 		);
 		assert.ok(extension, 'accessfs extension should be available in the test host');
+		assert.ok(
+			fs.existsSync(path.join(extension.extensionPath, 'out', 'vbaLanguageServer', 'server.js')),
+			'Access-FS should package its adapted VBA language server',
+		);
+		assert.ok(
+			(extension.packageJSON.activationEvents as string[]).includes('onCommand:accessfs.addToWorkspace'),
+			'accessfs.addToWorkspace should activate Access-FS when invoked',
+		);
+		assert.ok(
+			!(extension.packageJSON.extensionPack as string[] | undefined)?.includes('NotisDataAnalytics.vba-lsp'),
+			'Access-FS should not recommend the incompatible upstream VBA language server',
+		);
 
 		await extension.activate();
 		assert.ok(
@@ -43,6 +58,75 @@ suite('Extension Test Suite', () => {
 			undefined,
 			'winax should not load until an Access object is requested',
 		);
+	});
+
+	test('parses Access modules without VB_Name and navigates to module constants', async () => {
+		const extension = vscode.extensions.all.find(
+			candidate => candidate.packageJSON.name === 'accessfs',
+		);
+		assert.ok(extension, 'accessfs extension should be available in the test host');
+
+		const client = new LanguageClient(
+			'accessfs-vba-test',
+			'Access-FS VBA Language Server Test',
+			{
+				module: path.join(extension.extensionPath, 'out', 'vbaLanguageServer', 'server.js'),
+				transport: TransportKind.ipc,
+			},
+			{ documentSelector: [{ scheme: 'accessfs' }] },
+		);
+		const uri = 'accessfs://database/modules/Test.bas';
+		const source = [
+			'Option Compare Database',
+			'',
+			'Public Const X As String = "adsdsda"',
+			'',
+			'Public Sub hello()',
+			'    MsgBox X',
+			'End Sub',
+		].join('\n');
+
+		try {
+			await client.start();
+			const diagnosticsPromise = new Promise<{ message: string }[]>((resolve, reject) => {
+				let subscription: vscode.Disposable;
+				const timeout = setTimeout(() => {
+					subscription.dispose();
+					reject(new Error('Timed out waiting for VBA diagnostics.'));
+				}, 5000);
+				subscription = client.onNotification(
+					'textDocument/publishDiagnostics',
+					(params: { uri: string; diagnostics: { message: string }[] }) => {
+						if (params.uri !== uri) {
+							return;
+						}
+						clearTimeout(timeout);
+						subscription.dispose();
+						resolve(params.diagnostics);
+					},
+				);
+			});
+			await client.sendNotification('textDocument/didOpen', {
+				textDocument: { uri, languageId: 'vba', version: 1, text: source },
+			});
+			const diagnostics = await diagnosticsPromise;
+			assert.ok(
+				diagnostics.every(diagnostic =>
+					!diagnostic.message.includes('Module missing attribute VB_NAME')
+					&& !diagnostic.message.includes("Duplicate declaration 'Unknown Module'")),
+				'standard Access module source should not report synthetic module errors',
+			);
+
+			const definitions = await client.sendRequest('textDocument/definition', {
+				textDocument: { uri },
+				position: { line: 5, character: 11 },
+			}) as { targetUri: string; targetSelectionRange: { start: { line: number } } }[] | null;
+			assert.ok(definitions?.length, `the constant reference should have a definition; diagnostics: ${JSON.stringify(diagnostics)}`);
+			assert.strictEqual(definitions[0].targetUri, uri);
+			assert.strictEqual(definitions[0].targetSelectionRange.start.line, 2);
+		} finally {
+			await client.stop();
+		}
 	});
 
 	test('lists the Access object categories at the filesystem root', () => {
