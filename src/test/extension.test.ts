@@ -43,6 +43,15 @@ suite('Extension Test Suite', () => {
 			!(extension.packageJSON.extensionPack as string[] | undefined)?.includes('NotisDataAnalytics.vba-lsp'),
 			'Access-FS should not recommend the incompatible upstream VBA language server',
 		);
+		const vbaLanguage = (
+			extension.packageJSON.contributes.languages as { id: string; extensions: string[] }[]
+		).find(language => language.id === 'vba');
+		assert.ok(vbaLanguage, 'Access-FS should contribute the VBA language mode');
+		assert.deepStrictEqual(
+			vbaLanguage.extensions,
+			['.bas', '.cls', '.frm'],
+			'Access-FS should associate forms with the VBA language mode',
+		);
 
 		await extension.activate();
 		assert.ok(

@@ -18,6 +18,20 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "vba",
+        "aliases": [
+          "VBA",
+          "Visual Basic for Applications"
+        ],
+        "extensions": [
+          ".bas",
+          ".cls",
+          ".frm"
+        ]
+      }
+    ],
     "commands": [
       {
         "command": "accessfs.addToWorkspace",
