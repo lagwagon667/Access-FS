@@ -32,6 +32,13 @@
         ]
       }
     ],
+    "grammars": [
+      {
+        "language": "vba",
+        "scopeName": "source.vba",
+        "path": "./syntaxes/vba.tmLanguage.json"
+      }
+    ],
     "commands": [
       {
         "command": "accessfs.addToWorkspace",

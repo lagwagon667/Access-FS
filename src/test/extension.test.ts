@@ -52,6 +52,28 @@ suite('Extension Test Suite', () => {
 			['.bas', '.cls', '.frm'],
 			'Access-FS should associate forms with the VBA language mode',
 		);
+		const vbaGrammar = (
+			extension.packageJSON.contributes.grammars as {
+				language: string;
+				scopeName: string;
+				path: string;
+			}[]
+		).find(grammar => grammar.language === 'vba');
+		assert.ok(vbaGrammar, 'Access-FS should contribute a VBA syntax grammar');
+		assert.strictEqual(vbaGrammar.scopeName, 'source.vba');
+		const grammarPath = path.join(extension.extensionPath, vbaGrammar.path);
+		const grammar = JSON.parse(fs.readFileSync(grammarPath, 'utf8')) as {
+			scopeName: string;
+			patterns: unknown[];
+			repository?: Record<string, unknown>;
+		};
+		assert.ok(
+			fs.existsSync(path.join(path.dirname(grammarPath), 'UPSTREAM-LICENCE.txt')),
+			'the vendored grammar should include its MIT license',
+		);
+		assert.strictEqual(grammar.scopeName, vbaGrammar.scopeName);
+		assert.ok(grammar.patterns.length > 0, 'the VBA grammar should define syntax patterns');
+		assert.ok(grammar.repository, 'the VBA grammar should include its syntax rules');
 
 		await extension.activate();
 		assert.ok(

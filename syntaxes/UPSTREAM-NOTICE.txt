@@ -1,0 +1,7 @@
+The VBA TextMate grammar in this directory is from:
+https://github.com/SSlinky/VBA-LanguageServer/tree/v1.7.4
+
+Copyright (c) Sam Vanderslink
+
+The grammar is licensed under the MIT License. The full license text is
+included in UPSTREAM-LICENCE.txt.
